@@ -1368,6 +1368,92 @@ function printOldCard(id,cardId){
   const m=member(id),c=memberOldCards(m).find(x=>x.id===cardId);if(!c)return toast('Old card not found');
   printHTML('Old Card '+m.code,`<div style="display:flex;gap:18px;flex-wrap:wrap;font-family:Arial"><div style="width:340px;border:1px solid #ddd;border-radius:12px;padding:18px"><img src="${LOGO}" style="height:42px"><h2>${m.name}</h2><p><b>ID:</b> ${m.code}</p><p><b>Status:</b> ${c.status}</p><p><b>Package:</b> ${c.packageName||'-'}</p><p><b>Period:</b> ${c.startDate||'-'} to ${c.dueDate||'-'}</p><p><b>Archived:</b> ${c.reason||'old card'}</p></div><div style="width:340px;border:1px solid #ddd;border-radius:12px;padding:18px"><h3>Present Days</h3><p><b>Payment:</b> ${c.cardPayment?.mode||'-'} ${c.cardPayment?.received?rs(c.cardPayment.received):''}</p><p><b>Center serving:</b> ${c.centerServingNote||'-'}</p><div>${(c.presentDates||[]).length?c.presentDates.map(d=>`<span style="display:inline-block;border:1px solid #ddd;border-radius:999px;padding:5px 8px;margin:3px;font-size:12px">${d}</span>`).join(''):'No present days.'}</div></div></div>`,false);
 }
+
+/* Center code series, member transfers, and Afresh water choices */
+function cleanCodePrefix(value){
+  return String(value||'').trim().toUpperCase().replace(/\s+/g,'-').replace(/[^A-Z0-9-]/g,'').replace(/-+/g,'-').replace(/^-|-$/g,'');
+}
+function derivedCenterPrefix(cid){
+  const c=center(cid)||{},m=(c.name||'C').match(/Sector\s*(\d+)/i);
+  if(m)return 'S'+m[1];
+  return 'C'+String((S.centers||[]).findIndex(x=>x.id===cid)+1).padStart(2,'0');
+}
+centerPrefix=function(cid){
+  const stored=cleanCodePrefix((center(cid)||{}).codePrefix);
+  return stored||derivedCenterPrefix(cid);
+};
+nextMemberCode=function(cid){
+  const prefix=centerPrefix(cid),marker=prefix+'-';
+  const max=(S.members||[]).filter(m=>m.centerId===cid&&String(m.code||'').startsWith(marker)).reduce((a,m)=>{
+    const n=parseInt(String(m.code||'').slice(marker.length),10);
+    return Math.max(a,Number.isFinite(n)?n:0);
+  },0);
+  return prefix+'-'+String(max+1).padStart(4,'0');
+};
+function centerSeriesTip(c){
+  return `<div class="mini-metric">Future member IDs use <b>${centerPrefix(c.id)}-0001</b> style. Existing member IDs are not renamed automatically.</div>`;
+}
+manageCenters=function(){
+  openModal(`<div class="flex" style="justify-content:space-between"><h3>Manage centers, owners &amp; series</h3><span class="x" onclick="closeModal()">x</span></div>
+   <table style="margin:8px 0"><thead><tr><th>Center</th><th>Series</th><th>Next member ID</th><th>Role</th><th>Owner login</th><th></th></tr></thead><tbody>
+   ${S.centers.map(c=>`<tr><td><b>${c.name}</b>${centerSeriesTip(c)}</td><td>${centerPrefix(c.id)}</td><td>${nextMemberCode(c.id)}</td><td>${c.isHeadOffice?'<span class="pill ho">HEAD OFFICE</span>':'Branch'}</td><td class="muted">${ownerOf(c.id)||'-'}</td>
+     <td class="r">${c.isHeadOffice?'':`<button class="btn sm ghost" onclick="makeHO('${c.id}')">Make HO</button> `}<button class="btn sm ghost" onclick="renameCenterModal('${c.id}')">Edit</button> <button class="btn sm ghost" onclick="centerSeriesModal('${c.id}')">Series</button> <button class="btn sm" onclick="ownerLoginModal('${c.id}')">Owner login</button></td></tr>`).join('')}</tbody></table>
+   <div class="card" style="background:#f8fafc"><h3>Add center</h3><div class="grid3"><div><label>Name</label><input id="ct_name" placeholder="e.g. AWC - PB"></div><div><label>Member ID series</label><input id="ct_prefix" placeholder="e.g. AWC-PB"></div><label class="chk"><input type="checkbox" id="ct_ho"> Head Office</label></div><div style="text-align:right;margin-top:10px"><button class="btn" onclick="addCenter()">Add</button></div></div>`);
+};
+addCenter=function(){
+  const n=v('ct_name').trim();if(!n)return toast('Enter a name');
+  const ho=vc('ct_ho'),id='CT'+Date.now(),prefix=cleanCodePrefix(v('ct_prefix'));
+  if(ho)S.centers.forEach(c=>c.isHeadOffice=false);
+  S.centers.push({id,name:n,isHeadOffice:ho,codePrefix:prefix});
+  seedCenterStock(id);save();manageCenters();toast('Center added');
+};
+renameCenterModal=function(cid){
+  const c=center(cid);if(!c)return toast('Center not found');
+  openModal(`<div class="flex" style="justify-content:space-between"><h3>Edit center</h3><span class="x" onclick="closeModal()">x</span></div><div class="grid2" style="margin-top:8px"><div><label>Center name</label><input id="rc_name" value="${c.name}"></div><div><label>Member ID series</label><input id="rc_prefix" value="${centerPrefix(cid)}" placeholder="e.g. AWC-PB"></div></div>${centerSeriesTip(c)}<div style="text-align:right;margin-top:10px"><button class="btn" onclick="saveCenterIdentity('${cid}')">Save</button></div>`);
+};
+function saveCenterIdentity(cid){
+  const c=center(cid);if(!c)return toast('Center not found');
+  const prefix=cleanCodePrefix(v('rc_prefix'));if(!prefix)return toast('Enter a valid series prefix');
+  c.name=v('rc_name')||c.name;c.codePrefix=prefix;save();closeModal();manageCenters();toast('Center updated');
+}
+function centerSeriesModal(cid){
+  const c=center(cid);if(!c)return toast('Center not found');
+  openModal(`<div class="flex" style="justify-content:space-between"><h3>Member ID series - ${c.name}</h3><span class="x" onclick="closeModal()">x</span></div><div style="margin-top:8px"><label>Series prefix</label><input id="cs_prefix" value="${centerPrefix(cid)}" placeholder="e.g. AWC-PB"></div><p class="muted" style="font-size:12px;margin-top:8px">Use letters, numbers and hyphens only. New members will be allotted like <b>${centerPrefix(cid)}-0001</b>, <b>${centerPrefix(cid)}-0002</b> and so on.</p><div style="text-align:right;margin-top:10px"><button class="btn" onclick="saveCenterSeries('${cid}')">Save series</button></div>`);
+}
+function saveCenterSeries(cid){
+  const c=center(cid),prefix=cleanCodePrefix(v('cs_prefix'));if(!c)return toast('Center not found');if(!prefix)return toast('Enter a valid series prefix');
+  c.codePrefix=prefix;save();closeModal();manageCenters();toast('Series updated for future members');
+}
+function moveMemberModal(id){
+  if(role!=='head')return toast('Head office only');
+  const m=member(id);if(!m)return toast('Member not found');
+  const targets=(S.centers||[]).filter(c=>c.id!==m.centerId);
+  if(!targets.length)return toast('No other center found');
+  openModal(`<div class="flex" style="justify-content:space-between"><h3>Shift member to another center</h3><span class="x" onclick="closeModal()">x</span></div><p class="muted" style="font-size:12px;margin:6px 0">${m.name} (${m.code}) is currently in ${centerLabel(m.centerId)}.</p><div class="grid2"><div><label>Move to center</label><select id="mv_center">${targets.map(c=>`<option value="${c.id}">${c.name} - next ${nextMemberCode(c.id)}</option>`).join('')}</select></div><label class="chk"><input type="checkbox" id="mv_keepcode"> Keep existing member ID</label></div><p class="muted" style="font-size:12px;margin-top:8px">By default the member gets the next ID from the target center series.</p><div style="text-align:right;margin-top:10px"><button class="btn" onclick="moveMemberSave('${id}')">Shift member</button></div>`);
+}
+function moveMemberSave(id){
+  const m=member(id);if(!m)return toast('Member not found');
+  const to=v('mv_center');if(!to||to===m.centerId)return toast('Choose another center');
+  const oldCenter=m.centerId,oldCode=m.code,keep=vc('mv_keepcode');
+  m.centerId=to;if(!keep)m.code=nextMemberCode(to);
+  m.updatedBy=curUser?.username||'system';m.updatedAt=new Date().toISOString();
+  (S.users||[]).filter(u=>u.role==='member'&&u.memberId===id).forEach(u=>u.centerId=to);
+  syncMembersToParties();save();closeModal();render();
+  toast(`${m.name} shifted from ${centerLabel(oldCenter)} to ${centerLabel(to)} (${keep?oldCode:m.code})`);
+}
+function afreshOptions(selected='Hot'){
+  return ['Hot','Cold','Luke Warm Water'].map(x=>`<option value="${x}" ${selected===x?'selected':''}>${x}</option>`).join('');
+}
+cardMetaFields=function(prefix,m={}){
+  const status=m.status||'Trial',pkg=m.cardPackageId||'basic_protein',pay=m.cardPayment||{},joined=m.cardPlan?.startDate||m.trial?.startDate||m.joinedAt||'',fresh=m.afreshPreference||'Hot',charge=pay.charge||cardChargeFor(status,pkg);
+  return `<div><label>Joining / card start date</label><input id="${prefix}_joined" type="date" value="${joined}"></div><div id="${prefix}_pkg_box"><label>Card package / serving option</label><select id="${prefix}_cardpkg" onchange="${cardFormScript(prefix)}">${cardPackageOptionsFor(status,pkg)}</select><div class="mini-metric">15 days is Silver, 30 days is Gold. Basic 3+2 with or without protein keeps base price; extra protein/fiber and Dino options auto-price.</div></div><div><label>Afresh preference</label><select id="${prefix}_afresh" onchange="${cardFormScript(prefix)}">${afreshOptions(fresh)}</select></div><div><label>Card charges</label><input id="${prefix}_charge" type="number" value="${charge}" oninput="document.getElementById('${prefix}_received').dataset.auto='0';cardUiChanged('${prefix}')"></div><div><label>Amount received</label><input id="${prefix}_received" type="number" value="${pay.received||charge||''}" data-auto="1" oninput="this.dataset.auto='0'"></div><div><label>Payment mode</label><select id="${prefix}_paymode"><option ${pay.mode==='Cash'?'selected':''}>Cash</option><option ${pay.mode==='UPI'?'selected':''}>UPI</option><option ${pay.mode==='Card'?'selected':''}>Card</option><option ${pay.mode==='Bank Transfer'?'selected':''}>Bank Transfer</option><option ${pay.mode==='Other'?'selected':''}>Other</option></select></div><div><label>Payment date</label><input id="${prefix}_paydate" type="date" value="${pay.date||today()}"></div><div><label>Payment remarks</label><input id="${prefix}_payremarks" value="${pay.remarks||''}"></div><div style="grid-column:1/-1"><label>Center serving note for kitchen</label><input id="${prefix}_servingnote" value="${m.centerServingNote||defaultServingNote(m,status,pkg,fresh)}" oninput="this.dataset.manual='1'"></div>`;
+};
+memberListRows=function(ms){
+  return ms.length?ms.map(m=>`<tr><td>${m.code}</td><td class="clik" onclick="editMemberModal('${m.id}')">${m.name}</td><td>${m.fatherName||'-'}</td><td>${m.mobile}</td><td>${memberRefLabel(m)}</td><td>${memberCoachLabel(m)}</td><td>${m.status}</td><td>${cardPackageLabel(m)}</td><td>${cardUsageLabel(m)}</td><td>${cardDueDate(m)||'-'}</td><td class="r"><button class="btn sm ghost" onclick="editMemberModal('${m.id}')">Edit</button> ${memberLedgerButton(m.id)} ${role==='head'?`<button class="btn sm ghost" onclick="moveMemberModal('${m.id}')">Move</button>`:''} <button class="btn sm ghost" onclick="openMember('${m.id}')">Open</button></td></tr>`).join(''):'<tr><td colspan="11" class="empty">No members found.</td></tr>';
+};
+memberQuickActions=function(m){
+  return `<div class="card member-actionbar" style="margin:0 0 14px"><div class="flex" style="justify-content:space-between;align-items:flex-start"><div><h3 style="margin:0">Member quick actions</h3><div class="mini-metric">Profile, health, card, payment ledger and printable form are managed here.</div></div>${memberHomeNote(m)}</div><div class="action-grid" style="margin-top:12px"><button class="btn sm ghost" onclick="editMemberModal('${m.id}')">Edit Profile</button>${memberLedgerButton(m.id,'blue')}${role==='head'?`<button class="btn sm ghost" onclick="moveMemberModal('${m.id}')">Shift Center</button>`:''}<button class="btn sm ghost" onclick="familyModal('${m.id}')">Add Family / DOB</button><button class="btn sm ghost" onclick="illnessModal('${m.id}')">Illness / Conditions</button><button class="btn sm" onclick="assessmentModal('${m.id}')">Add Test Reading</button><button class="btn sm" onclick="bloodReportModal('${m.id}')">Add Blood Report</button><button class="btn sm ghost" onclick="dietAdviceModal('${m.id}')">Diet & Timing</button><button class="btn sm ghost" onclick="bookCounsellingModal('${m.id}')">Counselling</button><button class="btn sm ghost" onclick="memberLoginModal('${m.id}')">Member Login</button><button class="btn sm blue" onclick="printMemberForm('${m.id}')">Print Full Form</button></div></div>`;
+};
 const oldCardsSaveEditMemberBase=saveEditMember;
 saveEditMember=function(id){
   const m=member(id),mobile=readRequiredPhone('e_mobile');if(!mobile)return;
