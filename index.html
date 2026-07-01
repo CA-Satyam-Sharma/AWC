@@ -1219,6 +1219,12 @@ function computeMemberLedger(id,from,to){
   const pay=m.cardPayment||{},cardDate=pay.date||m.joinedAt||today(),charge=+pay.charge||0,received=+pay.received||0;
   if(charge)ev.push({date:cardDate,ref:'CARD',desc:`${m.status||'Card'} - ${cardPackageLabel(m)}`,debit:charge,credit:0,vp:0});
   if(received)ev.push({date:cardDate,ref:'PAY',desc:`Card payment - ${pay.mode||'Cash'}`,debit:0,credit:received,vp:0});
+  memberOldCards(m).forEach((c,i)=>{
+    const oldPay=c.cardPayment||{},oldDate=oldPay.date||c.startDate||today(),suffix=(c.startDate||String(i+1)).replace(/-/g,''),label=c.packageName||c.status||'Old card';
+    const oldCharge=+oldPay.charge||0,oldReceived=+oldPay.received||0,period=`${c.startDate||'-'} to ${c.dueDate||'-'}`;
+    if(oldCharge)ev.push({date:oldDate,ref:'OLD-'+suffix,desc:`Old card charge - ${label} (${period})`,debit:oldCharge,credit:0,vp:0});
+    if(oldReceived)ev.push({date:oldDate,ref:'OLDPAY-'+suffix,desc:`Old card receipt - ${oldPay.mode||'Cash'} - ${label}`,debit:0,credit:oldReceived,vp:0});
+  });
   if(partyId){
     S.sales.filter(s=>s.customerId===partyId&&(role==='head'||s.centerId===curCenter)).forEach(s=>{
       ev.push({date:s.date,ref:s.no,desc:`Product sale (${tierLabel(s.tier)}), ${s.items.length} item(s)`,debit:s.subtotal,credit:0,vp:s.totalVp});
