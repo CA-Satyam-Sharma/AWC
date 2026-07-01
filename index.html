@@ -1601,6 +1601,39 @@ function makeMemberCoachModal(id){
   setTimeout(()=>{const sel=document.getElementById('mc_member');if(sel){sel.value=id;const u=document.getElementById('mc_user'),n=document.getElementById('mc_name');if(u)u.value='';if(n)n.value='';prefillCoachFromMember();}},0);
 }
 
+/* Manual referral names for imports where referrer is not yet a member */
+memberRefLabel=function(m){
+  const r=m?.referredById?member(m.referredById):null;
+  return r?`${r.name} (${r.code||''})`:(m?.referredByText||m?.referralSource||'-');
+};
+const manualRefAddMemberModalBase=addMemberModal;
+addMemberModal=function(){
+  manualRefAddMemberModalBase();
+  const ref=document.getElementById('m_refby');
+  if(ref&&!document.getElementById('m_reftext'))ref.parentElement.insertAdjacentHTML('afterend',`<div><label>Referred by name (manual)</label><input id="m_reftext" placeholder="Use when referrer is not in member list"></div>`);
+};
+const manualRefSaveMemberBase=saveMember;
+saveMember=function(){
+  const mobileBefore=cleanPhone(v('m_mobile')),manualRef=String(v('m_reftext')||'').trim();
+  manualRefSaveMemberBase();
+  if(manualRef){
+    const m=(S.members||[]).slice().reverse().find(x=>cleanPhone(x.mobile)===mobileBefore);
+    if(m){m.referredByText=manualRef;if(!m.referredById)m.referralSource='Referral';save();}
+  }
+};
+const manualRefEditMemberModalBase=editMemberModal;
+editMemberModal=function(id){
+  manualRefEditMemberModalBase(id);
+  const ref=document.getElementById('e_refby'),m=member(id);
+  if(ref&&!document.getElementById('e_reftext'))ref.parentElement.insertAdjacentHTML('afterend',`<div><label>Referred by name (manual)</label><input id="e_reftext" value="${m?.referredByText||''}" placeholder="Use when referrer is not in member list"></div>`);
+};
+const manualRefSaveEditMemberBase=saveEditMember;
+saveEditMember=function(id){
+  const m=member(id),hasRefText=!!document.getElementById('e_reftext'),manualRef=String(v('e_reftext')||'').trim();
+  manualRefSaveEditMemberBase(id);
+  if(m&&hasRefText){m.referredByText=manualRef;if(manualRef&&!m.referredById)m.referralSource='Referral';save();}
+};
+
 /* Supabase shared-state backend */
 const SUPABASE_BACKEND={
   url:'https://qesvwjrnqjszcrrlhvfw.supabase.co',
