@@ -1246,6 +1246,83 @@ viewMembers=function(){const ms=visibleMembers().filter(m=>!memQ||(m.name+' '+m.
 viewReception=function(){const ms=visibleMembers();document.getElementById('view').innerHTML=`<div class="page-head"><div><h2>Reception</h2><p>Register members, collect card payment, add backdated visits and track card balance.</p></div><button class="btn" onclick="addMemberModal()">+ Register Member</button></div><div class="card"><div class="tablewrap"><table><thead><tr><th>Code</th><th>Name</th><th>Mobile</th><th>Referred by</th><th>Coach</th><th>Status</th><th>Package</th><th>Payment</th><th>Card use</th><th>Due</th><th>Ledger</th><th>Card</th><th>Check in</th><th class="r">Edit</th></tr></thead><tbody>${ms.map(m=>`<tr><td>${m.code}</td><td class="clik" onclick="editMemberModal('${m.id}')">${m.name}</td><td>${m.mobile}</td><td>${memberRefLabel(m)}</td><td>${memberCoachLabel(m)}</td><td>${m.status}</td><td>${cardPackageLabel(m)}</td><td>${cardPaymentLabel(m)}</td><td>${cardUsageLabel(m)}</td><td>${cardDueDate(m)||'-'}</td><td>${memberLedgerButton(m.id)}</td><td><button class="btn sm ghost" onclick="printMemberCard('${m.id}')">Print card</button></td><td><button class="btn sm" onclick="markAttendDate('${m.id}')">Check in</button></td><td class="r"><button class="btn sm ghost" onclick="editMemberModal('${m.id}')">Edit</button></td></tr>`).join('')||'<tr><td colspan="14" class="empty">No members found.</td></tr>'}</tbody></table></div></div>`;};
 Object.assign(VIEWS,{memberledger:viewMemberLedger,members:viewMembers,reception:viewReception,mdetail:viewMemberDetail});
 
+/* Card renewal history and old cards */
+const oldCardsHasModule=hasModule;
+hasModule=function(k){if(k==='memberledger')return role==='head'||oldCardsHasModule('members')||oldCardsHasModule('reception');return oldCardsHasModule(k);};
+function memberOldCards(m){m.oldCards=m.oldCards||[];return m.oldCards;}
+function currentCardPresentDates(m,limit=true){
+  const u=cardUsage(m);if(!u)return [];
+  const dates=attendanceDates(m).filter(d=>d>=u.start).sort();
+  return limit?dates.slice(0,u.total):dates;
+}
+function archiveCurrentCard(m,reason='renewed',untilDate=''){
+  const u=cardUsage(m);if(!u)return null;
+  const start=u.start,total=u.total,allDates=attendanceDates(m).filter(d=>d>=start&&(!untilDate||d<untilDate)).sort();
+  const presentDates=untilDate?allDates:allDates.slice(0,total);
+  const dueDate=addDays(start,total-1);
+  const card={
+    id:'OC'+Date.now()+Math.floor(Math.random()*999),
+    reason,
+    status:m.status,
+    packageId:m.cardPackageId||'basic_protein',
+    packageName:cardPackageLabel(m),
+    totalDays:total,
+    startDate:start,
+    dueDate,
+    presentDates,
+    cardPayment:{...(m.cardPayment||{})},
+    afreshPreference:m.afreshPreference||'Hot',
+    centerServingNote:m.centerServingNote||defaultServingNote(m,m.status,m.cardPackageId,m.afreshPreference),
+    archivedAt:new Date().toISOString(),
+    archivedBy:curUser?.username||'system'
+  };
+  const exists=memberOldCards(m).some(c=>c.startDate===card.startDate&&c.status===card.status&&c.totalDays===card.totalDays&&String(c.presentDates||[]).join('|')===String(card.presentDates||[]).join('|'));
+  if(!exists)memberOldCards(m).push(card);
+  m.cardPlan=null;m.trial=null;m.cardPayment={};m.status='Active';
+  return card;
+}
+function shouldArchiveRenewal(m,prefix){
+  const oldTotal=m?.cardPlan?.totalDays||cardTotalForStatus(m?.status,m?.cardPlan?.totalDays)||0;
+  const newStatus=v(prefix+'_status'),newTotal=cardTotalForStatus(newStatus,v(prefix+'_carddays'));
+  const oldStart=cardStartDate(m),newStart=v(prefix+'_joined')||oldStart;
+  return !!(oldTotal&&newTotal&&oldStart&&newStart&&newStart>oldStart);
+}
+function archiveCompletedCardIfNeeded(m){
+  const u=cardUsage(m);if(!u||u.consumedRaw<u.total)return false;
+  archiveCurrentCard(m,'completed');
+  return true;
+}
+function oldCardsHTML(m){
+  const cards=memberOldCards(m).slice().sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''));
+  if(!cards.length)return '<div class="empty">No old cards yet.</div>';
+  return `<div class="tablewrap"><table><thead><tr><th>Card</th><th>Period</th><th>Present Days</th><th>Payment</th><th>Reason</th><th class="r">Print</th></tr></thead><tbody>${cards.map(c=>`<tr><td><b>${c.status}</b><div class="mini-metric">${c.packageName||'-'}</div></td><td>${c.startDate||'-'} to ${c.dueDate||'-'}</td><td>${(c.presentDates||[]).length}/${c.totalDays||0}<div>${(c.presentDates||[]).map(d=>`<span class="chip">${d}</span>`).join(' ')||'<span class="muted">No present days.</span>'}</div></td><td>${c.cardPayment?.received?rs(c.cardPayment.received):'-'} ${c.cardPayment?.mode||''}</td><td>${c.reason||'old card'}</td><td class="r"><button class="btn sm ghost" onclick="printOldCard('${m.id}','${c.id}')">Print</button></td></tr>`).join('')}</tbody></table></div>`;
+}
+function oldCardsModal(id){const m=member(id);openModal(`<div class="flex" style="justify-content:space-between"><h3>Old Cards - ${m.name}</h3><span class="x" onclick="closeModal()">x</span></div>${oldCardsHTML(m)}`);}
+function printOldCard(id,cardId){
+  const m=member(id),c=memberOldCards(m).find(x=>x.id===cardId);if(!c)return toast('Old card not found');
+  printHTML('Old Card '+m.code,`<div style="display:flex;gap:18px;flex-wrap:wrap;font-family:Arial"><div style="width:340px;border:1px solid #ddd;border-radius:12px;padding:18px"><img src="${LOGO}" style="height:42px"><h2>${m.name}</h2><p><b>ID:</b> ${m.code}</p><p><b>Status:</b> ${c.status}</p><p><b>Package:</b> ${c.packageName||'-'}</p><p><b>Period:</b> ${c.startDate||'-'} to ${c.dueDate||'-'}</p><p><b>Archived:</b> ${c.reason||'old card'}</p></div><div style="width:340px;border:1px solid #ddd;border-radius:12px;padding:18px"><h3>Present Days</h3><p><b>Payment:</b> ${c.cardPayment?.mode||'-'} ${c.cardPayment?.received?rs(c.cardPayment.received):''}</p><p><b>Center serving:</b> ${c.centerServingNote||'-'}</p><div>${(c.presentDates||[]).length?c.presentDates.map(d=>`<span style="display:inline-block;border:1px solid #ddd;border-radius:999px;padding:5px 8px;margin:3px;font-size:12px">${d}</span>`).join(''):'No present days.'}</div></div></div>`,false);
+}
+const oldCardsSaveEditMemberBase=saveEditMember;
+saveEditMember=function(id){
+  const m=member(id),mobile=readRequiredPhone('e_mobile');if(!mobile)return;
+  if(S.members.some(x=>x.id!==id&&x.mobile===mobile))return toast('Mobile already exists');
+  const wa=cleanPhone(v('e_wa'));if(wa&&!isPhone10(wa))return toast('WhatsApp must be exactly 10 digits');
+  const renewStart=v('e_joined')||cardStartDate(m),renewing=shouldArchiveRenewal(m,'e');
+  if(renewing)archiveCurrentCard(m,'renewed',renewStart);
+  m.name=v('e_name');m.mobile=mobile;m.fatherName=v('e_father');m.whatsapp=wa;m.email=v('e_email');m.herbalifeId=v('e_hlid');m.height=+v('e_h')||null;m.occupation=v('e_occ');m.referralSource=v('e_refsrc');m.referredById=v('e_refby');m.assignedCoachId=v('e_coach');m.status=v('e_status');m.address=v('e_addr');applyCardMetaFromForm(m,'e');
+  archiveCompletedCardIfNeeded(m);
+  m.updatedBy=curUser.username;m.updatedAt=new Date().toISOString();syncMembersToParties();save();closeModal();render();toast(renewing?'Old card moved to Old Cards. New card saved.':'Member profile saved');
+};
+const oldCardsMarkAttendBase=markAttendDate;
+markAttendDate=function(id){oldCardsMarkAttendBase(id);const m=member(id);if(archiveCompletedCardIfNeeded(m)){save();render();toast('Card completed and moved to Old Cards');}};
+const oldCardsAddPastAttendanceBase=addPastAttendance;
+addPastAttendance=function(id){oldCardsAddPastAttendanceBase(id);const m=member(id);if(archiveCompletedCardIfNeeded(m)){save();editMemberModal(id);toast('Card completed and moved to Old Cards');}};
+const oldCardsAddSelectedPastDatesBase=addSelectedPastDates;
+addSelectedPastDates=function(id){oldCardsAddSelectedPastDatesBase(id);const m=member(id);if(archiveCompletedCardIfNeeded(m)){save();editMemberModal(id);toast('Card completed and moved to Old Cards');}};
+cardSummaryHTML=function(m){const u=cardUsage(m),oldCount=memberOldCards(m).length;return u?`<div class="card" style="margin-bottom:14px"><div class="grid4"><div><label>Card type</label>${m.status}</div><div><label>Package</label>${cardPackageLabel(m)}</div><div><label>Start date</label>${u.start}</div><div><label>Due date</label>${cardDueDate(m)||'-'}</div><div><label>Consumed</label>${Math.min(u.consumedRaw,u.total)} day(s)</div><div><label>Balance</label>${Math.max(0,u.remaining)} day(s)</div><div><label>Payment</label>${cardPaymentLabel(m)}</div><div><label>Old Cards</label><button class="btn sm ghost" onclick="oldCardsModal('${m.id}')">${oldCount} old card(s)</button></div></div><div style="margin-top:8px"><label>Present Days</label>${currentCardPresentDates(m).length?currentCardPresentDates(m).map(d=>`<span class="chip">${d}</span>`).join(' '):'<span class="muted">No present days on current card.</span>'}</div></div>`:`<div class="card" style="margin-bottom:14px"><div class="flex" style="justify-content:space-between"><div><h3 style="margin:0">No active card</h3><div class="mini-metric">Completed or renewed cards are available in Old Cards.</div></div><button class="btn sm ghost" onclick="oldCardsModal('${m.id}')">${oldCount} Old Cards</button></div></div>`;};
+printMemberCard=function(id){const m=member(id),u=cardUsage(m),dates=currentCardPresentDates(m),p=m.cardPayment||{};const front=`<div style="display:flex;gap:18px;flex-wrap:wrap;font-family:Arial"><div style="width:340px;border:1px solid #ddd;border-radius:12px;padding:18px"><img src="${LOGO}" style="height:42px"><h2>${m.name}</h2><p><b>ID:</b> ${m.code}</p><p><b>Center:</b> ${(center(m.centerId)||{}).name}</p><p><b>Coach:</b> ${memberCoachLabel(m)}</p><p><b>Status:</b> ${m.status}</p><p><b>Package:</b> ${cardPackageLabel(m)}</p><p><b>Afresh:</b> ${m.afreshPreference||'Hot'}</p><p><b>Card:</b> ${u?Math.min(u.consumedRaw,u.total)+'/'+u.total+' used, '+Math.max(0,u.remaining)+' left':'No active card'}</p><p><b>Due date:</b> ${cardDueDate(m)||'-'}</p><div style="border:1px dashed #999;padding:12px;text-align:center">QR / BARCODE</div></div><div style="width:340px;border:1px solid #ddd;border-radius:12px;padding:18px"><h3>Present Days</h3><p><b>Start:</b> ${u?.start||m.joinedAt||'-'} &nbsp; <b>Payment:</b> ${p.mode||'-'} ${p.received?rs(p.received):''}</p><p><b>Center serving:</b> ${m.centerServingNote||defaultServingNote(m,m.status,m.cardPackageId,m.afreshPreference)}</p><div>${dates.length?dates.map(d=>`<span style="display:inline-block;border:1px solid #ddd;border-radius:999px;padding:5px 8px;margin:3px;font-size:12px">${d}</span>`).join(''):'No present days on current card.'}</div><p style="font-size:11px;color:#555;margin-top:10px">Renewed/completed card days move to Old Cards. Attendance reports still keep full history.</p></div></div>`;printHTML('Member Card '+m.code,front,false);};
+memberQuickActions=function(m){return `<div class="card member-actionbar" style="margin:0 0 14px"><div class="flex" style="justify-content:space-between;align-items:flex-start"><div><h3 style="margin:0">Member quick actions</h3><div class="mini-metric">Profile, health, card, old cards, payment ledger and printable form are managed here.</div></div>${memberHomeNote(m)}</div><div class="action-grid" style="margin-top:12px"><button class="btn sm ghost" onclick="editMemberModal('${m.id}')">Edit Profile</button>${memberLedgerButton(m.id,'blue')}<button class="btn sm ghost" onclick="oldCardsModal('${m.id}')">Old Cards</button><button class="btn sm ghost" onclick="familyModal('${m.id}')">Add Family / DOB</button><button class="btn sm ghost" onclick="illnessModal('${m.id}')">Illness / Conditions</button><button class="btn sm" onclick="assessmentModal('${m.id}')">Add Test Reading</button><button class="btn sm" onclick="bloodReportModal('${m.id}')">Add Blood Report</button><button class="btn sm ghost" onclick="dietAdviceModal('${m.id}')">Diet & Timing</button><button class="btn sm ghost" onclick="bookCounsellingModal('${m.id}')">Counselling</button><button class="btn sm ghost" onclick="memberLoginModal('${m.id}')">Member Login</button><button class="btn sm blue" onclick="printMemberForm('${m.id}')">Print Full Form</button></div></div>`;};
+
 /* Supabase shared-state backend */
 const SUPABASE_BACKEND={
   url:'https://qesvwjrnqjszcrrlhvfw.supabase.co',
