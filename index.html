@@ -1208,6 +1208,66 @@ addMemberModal=function(){cardRefreshAddMemberModal();setTimeout(()=>cardUiChang
 const cardRefreshEditMemberModal=editMemberModal;
 editMemberModal=function(id){cardRefreshEditMemberModal(id);setTimeout(()=>cardUiChanged('e'),0);};
 
+/* Silver/Gold card compositions and dynamic add-on pricing */
+CENTER_CARD_PACKAGES.splice(0,CENTER_CARD_PACKAGES.length,
+  {id:'basic_protein',name:'Basic 3+2+1',formula1:3,shakeMate:2,protein:1,fiber:0,dinoShake:0},
+  {id:'basic_no_protein',name:'Basic 3+2 no protein',formula1:3,shakeMate:2,protein:0,fiber:0,dinoShake:0},
+  {id:'more_protein',name:'Basic + extra protein',formula1:3,shakeMate:2,protein:2,fiber:0,dinoShake:0},
+  {id:'basic_protein_fiber',name:'Basic + extra fiber',formula1:3,shakeMate:2,protein:1,fiber:1,dinoShake:0},
+  {id:'more_protein_fiber',name:'Basic + extra protein + fiber',formula1:3,shakeMate:2,protein:2,fiber:1,dinoShake:0},
+  {id:'dino_shakemate',name:'Dino Shake + ShakeMate',formula1:0,shakeMate:2,protein:0,fiber:0,dinoShake:1},
+  {id:'dino_half_protein',name:'Dino Shake + ShakeMate + half protein',formula1:0,shakeMate:2,protein:.5,fiber:0,dinoShake:1}
+);
+Object.assign(CARD_PACKAGE_PRICES['15 Days Card'],{
+  basic_protein:5500,basic_no_protein:5500,more_protein:6100,basic_protein_fiber:6700,more_protein_fiber:7300,
+  dino_shakemate:3500,dino_half_protein:3800
+});
+Object.assign(CARD_PACKAGE_PRICES['30 Days Card'],{
+  basic_protein:9000,basic_no_protein:9000,more_protein:10200,basic_protein_fiber:11400,more_protein_fiber:12600,
+  dino_shakemate:7000,dino_half_protein:7600
+});
+const CARD_PACKAGE_NAMES={
+  basic_protein:'Basic 3F1 + 2 ShakeMate + 1 Protein',
+  basic_no_protein:'Basic 3F1 + 2 ShakeMate - no Protein',
+  more_protein:'Basic + extra Protein',
+  basic_protein_fiber:'Basic + extra Fiber',
+  more_protein_fiber:'Basic + extra Protein + Fiber',
+  dino_shakemate:'Dino Shake + ShakeMate',
+  dino_half_protein:'Dino Shake + ShakeMate + half Protein'
+};
+function cardTierName(status){return status==='15 Days Card'?'Silver Card':status==='30 Days Card'?'Gold Card':status||'';}
+cardStatusOptions=function(selected=''){return `<option value="Trial" ${selected==='Trial'?'selected':''}>Trial - Basic Protein, 4 days</option><option value="No Card" ${selected==='No Card'?'selected':''}>No Card - Basic Protein, 1 serving</option><option value="15 Days Card" ${selected==='15 Days Card'?'selected':''}>Silver Card - 15 days</option><option value="30 Days Card" ${selected==='30 Days Card'?'selected':''}>Gold Card - 30 days</option><option value="Other Days Card" ${selected==='Other Days Card'?'selected':''}>Other days card</option><option value="Active" ${selected==='Active'?'selected':''}>Active member</option><option value="Inactive" ${selected==='Inactive'?'selected':''}>Inactive</option>`;};
+cardChargeFor=function(status,pkgId,current){if(status==='Trial')return 1000;if(status==='No Card')return 500;if(CARD_PACKAGE_PRICES[status])return CARD_PACKAGE_PRICES[status][pkgId||'basic_protein']||0;if(status==='Other Days Card')return +current||0;return 0;};
+function packageServingText(p){
+  if(!p)return '-';
+  const parts=[];
+  if(p.formula1)parts.push(`Formula 1 ${p.formula1} scoop${p.formula1===1?'':'s'}`);
+  if(p.dinoShake)parts.push(`Dino Shake ${p.dinoShake} scoop${p.dinoShake===1?'':'s'}`);
+  if(p.shakeMate)parts.push(`ShakeMate ${p.shakeMate} scoop${p.shakeMate===1?'':'s'}`);
+  if(p.protein)parts.push(`Protein ${p.protein} scoop${p.protein===1?'':'s'}`);
+  if(p.fiber)parts.push(`Fiber ${p.fiber} scoop${p.fiber===1?'':'s'}`);
+  return parts.join(', ');
+}
+cardPackageLabel=function(m){if(m?.status==='Trial')return 'Trial - Basic Protein';if(m?.status==='No Card')return 'No Card - Basic Protein';if(!cardTotalForStatus(m?.status,m?.cardPlan?.totalDays))return '-';const p=centerCardPackage(m.cardPackageId),tier=cardTierName(m.status);return `${tier} - ${CARD_PACKAGE_NAMES[p.id]||p.name}`;};
+cardServingText=function(m){if(!cardTotalForStatus(m?.status,m?.cardPlan?.totalDays))return '-';if(m.status==='Trial'||m.status==='No Card')return 'Basic Protein serving';return packageServingText(centerCardPackage(m.cardPackageId));};
+defaultServingNote=function(m,status,pkgId,afresh){const fake={...(m||{}),status:status||m?.status,cardPackageId:pkgId||m?.cardPackageId,afreshPreference:afresh||m?.afreshPreference||'Hot'};return `${cardServingText(fake)} | Afresh ${fake.afreshPreference}`;};
+cardPackageOptionsFor=function(status,selected){
+  const keys=(status==='Trial'||status==='No Card')?['basic_protein']:CENTER_CARD_PACKAGES.map(p=>p.id);
+  return keys.map(k=>{const price=cardChargeFor(status,k),label=CARD_PACKAGE_NAMES[k]||centerCardPackage(k).name;return `<option value="${k}" ${k===selected?'selected':''}>${label}${price?' - '+rs(price):''}</option>`;}).join('');
+};
+centerCardPackageOptions=function(selected,status){return cardPackageOptionsFor(status||'15 Days Card',selected);};
+cardUiChanged=function(prefix){
+  const st=document.getElementById(prefix+'_status')?.value||'Trial',pkgEl=document.getElementById(prefix+'_cardpkg'),box=document.getElementById(prefix+'_carddays_box'),note=document.getElementById(prefix+'_cardnote'),charge=document.getElementById(prefix+'_charge'),recv=document.getElementById(prefix+'_received'),freshEl=document.getElementById(prefix+'_afresh'),serv=document.getElementById(prefix+'_servingnote');
+  if(box)box.style.display=st==='Other Days Card'?'block':'none';
+  if(pkgEl){const prev=pkgEl.value||'basic_protein';pkgEl.innerHTML=cardPackageOptionsFor(st,prev);pkgEl.value=[...pkgEl.options].some(o=>o.value===prev)?prev:'basic_protein';}
+  const pkg=pkgEl?.value||'basic_protein',val=cardChargeFor(st,pkg,charge?.value);
+  if(charge&&st!=='Other Days Card')charge.value=val||'';
+  if(recv&&(recv.value===''||recv.dataset.auto==='1')){recv.value=(st==='Other Days Card'?(charge?.value||''):val)||'';recv.dataset.auto='1';}
+  if(serv&&serv.dataset.manual!=='1'){serv.value=defaultServingNote({status:st,cardPackageId:pkg,afreshPreference:freshEl?.value||'Hot'});}
+  if(note){const d=st==='Trial'?4:st==='No Card'?1:st==='15 Days Card'?15:st==='30 Days Card'?30:(st==='Other Days Card'?(document.getElementById(prefix+'_carddays')?.value||'custom'):'');note.style.display=d?'block':'none';note.innerHTML=d==='custom'?'Enter custom card days and manual charges.':(`${cardTierName(st)} will track ${d} day(s). Attendance/check-in consumes days.`);}
+};
+cardMetaFields=function(prefix,m={}){const status=m.status||'Trial',pkg=m.cardPackageId||'basic_protein',pay=m.cardPayment||{},joined=m.cardPlan?.startDate||m.trial?.startDate||m.joinedAt||'',fresh=m.afreshPreference||'Hot',charge=pay.charge||cardChargeFor(status,pkg);return `<div><label>Joining / card start date</label><input id="${prefix}_joined" type="date" value="${joined}"></div><div id="${prefix}_pkg_box"><label>Card package / serving option</label><select id="${prefix}_cardpkg" onchange="${cardFormScript(prefix)}">${cardPackageOptionsFor(status,pkg)}</select><div class="mini-metric">15 days is Silver, 30 days is Gold. Basic 3+2 with or without protein keeps base price; extra protein/fiber and Dino options auto-price.</div></div><div><label>Afresh preference</label><select id="${prefix}_afresh" onchange="${cardFormScript(prefix)}"><option ${fresh==='Hot'?'selected':''}>Hot</option><option ${fresh==='Cold'?'selected':''}>Cold</option></select></div><div><label>Card charges</label><input id="${prefix}_charge" type="number" value="${charge}" oninput="document.getElementById('${prefix}_received').dataset.auto='0';cardUiChanged('${prefix}')"></div><div><label>Amount received</label><input id="${prefix}_received" type="number" value="${pay.received||charge||''}" data-auto="1" oninput="this.dataset.auto='0'"></div><div><label>Payment mode</label><select id="${prefix}_paymode"><option ${pay.mode==='Cash'?'selected':''}>Cash</option><option ${pay.mode==='UPI'?'selected':''}>UPI</option><option ${pay.mode==='Card'?'selected':''}>Card</option><option ${pay.mode==='Bank Transfer'?'selected':''}>Bank Transfer</option><option ${pay.mode==='Other'?'selected':''}>Other</option></select></div><div><label>Payment date</label><input id="${prefix}_paydate" type="date" value="${pay.date||today()}"></div><div><label>Payment remarks</label><input id="${prefix}_payremarks" value="${pay.remarks||''}"></div><div style="grid-column:1/-1"><label>Center serving note for kitchen</label><input id="${prefix}_servingnote" value="${m.centerServingNote||defaultServingNote(m,status,pkg,fresh)}" oninput="this.dataset.manual='1'"></div>`;};
+
 /* Member ledger: direct view from Reception and Member Master */
 let mlMember='',mlFrom='',mlTo='';
 function memberLedgerPartyId(id){syncMembersToParties();return (S.customers||[]).find(c=>c.memberId===id)?.id||'';}
