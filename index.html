@@ -1752,8 +1752,8 @@ function attendanceFilterControl(){
 }
 const attendanceRenderReportBase=renderReport;
 renderReport=function(){
-  const m=buildReport(),filter=repType==='attendance2'?attendanceFilterControl():'';
-  document.getElementById('repout').innerHTML=`<h3 style="margin-top:6px">${m.title}</h3>${filter}`+(m.rows.length?`<div class="tablewrap">${tableToHTML(m.head,m.rows,m.foot)}</div>`:`<div class="empty">No data for this period.</div>`);
+  const m=buildReport();
+  document.getElementById('repout').innerHTML=`<h3 style="margin-top:6px">${m.title}</h3>`+(m.rows.length?`<div class="tablewrap">${tableToHTML(m.head,m.rows,m.foot)}</div>`:`<div class="empty">No data for this period.</div>`);
 };
 viewReports=function(){
   if(!repTo)repTo=today();
