@@ -1643,12 +1643,27 @@ memberPresentAt=function(m,date,cid=curCenter){return !!attendanceAtCenter(m,dat
 function normalizeAttendanceRecord(m,a){if(typeof a==='string')return {date:a,centerId:m.centerId,homeCenterId:m.centerId,source:'legacy'};return {...a,centerId:attendanceCenterId(a,m),homeCenterId:a.homeCenterId||m.centerId};}
 function attendanceRecordsInRange(m,from,to,cid=curCenter){return (m.attendance||[]).map(a=>normalizeAttendanceRecord(m,a)).filter(a=>(!from||a.date>=from)&&(!to||a.date<=to)&&(cid==='all'||a.centerId===cid));}
 function dateRangeList(from,to){const s=from||to||today(),e=to||from||today(),out=[];let d=new Date(s+'T00:00:00');const end=new Date(e+'T00:00:00');while(d<=end&&out.length<62){out.push(d.toISOString().slice(0,10));d.setDate(d.getDate()+1);}return out;}
+function oldCardVisitLabelForRecord(m,rec){
+  const cards=(m.oldCards||[]).filter(c=>{
+    const dates=c.presentDates||[];
+    return dates.includes(rec.date)||(c.startDate&&c.dueDate&&rec.date>=c.startDate&&rec.date<=c.dueDate);
+  }).sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''));
+  const c=cards[0];if(!c)return '';
+  const dates=(c.presentDates||[]).slice().sort();
+  let idx=dates.indexOf(rec.date)+1;
+  if(!idx)idx=dates.filter(d=>d<=rec.date).length||1;
+  const total=c.totalDays||dates.length||cardTotalForStatus(c.status,0)||0;
+  return total?`${Math.min(idx,total)}/${total}`:'Old card';
+}
 function memberVisitLabelForRecord(m,rec){
+  if(rec.dailyCharge)return 'Daily';
+  const oldLabel=oldCardVisitLabelForRecord(m,rec);
+  if(oldLabel)return oldLabel;
   const u=cardUsage(m),status=m.status||'';
   const records=attendanceRecordsInRange(m,'',rec.date,'all').filter(a=>!u||a.date>=u.start).sort((a,b)=>(a.date+a.centerId).localeCompare(b.date+b.centerId));
   const idx=Math.max(1,records.findIndex(a=>a.date===rec.date&&a.centerId===rec.centerId)+1);
   if(status==='Trial')return idx+'T';
-  if(status==='No Card'||rec.dailyCharge)return 'Daily';
+  if(status==='No Card')return 'Daily';
   if(u)return Math.min(idx,u.total)+'/'+u.total;
   return 'No active card';
 }
