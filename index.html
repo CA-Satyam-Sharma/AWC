@@ -1716,11 +1716,19 @@ buildReport=function(){
   return attendanceReportsBuildBase();
 };
 const attendanceReportsViewBase=viewReports;
+function attendanceFilterControl(){
+  return `<div class="tier-note" style="margin:8px 0"><div class="flex" style="align-items:end"><div><label>Attendance status</label><select id="att_report_filter" onchange="attReportFilter=this.value;render()"><option value="all" ${attReportFilter==='all'?'selected':''}>All</option><option value="yes" ${attReportFilter==='yes'?'selected':''}>Present only</option><option value="no" ${attReportFilter==='no'?'selected':''}>Absent only</option></select></div><div class="mini-metric">This filter controls both online view and CSV download.</div></div></div>`;
+}
+const attendanceRenderReportBase=renderReport;
+renderReport=function(){
+  const m=buildReport(),filter=repType==='attendance2'?attendanceFilterControl():'';
+  document.getElementById('repout').innerHTML=`<h3 style="margin-top:6px">${m.title}</h3>${filter}`+(m.rows.length?`<div class="tablewrap">${tableToHTML(m.head,m.rows,m.foot)}</div>`:`<div class="empty">No data for this period.</div>`);
+};
 viewReports=function(){
   if(!repTo)repTo=today();
   const extra=[['health','Health'],['attendance2','Attendance'],['outsideVisits','Outside Visits'],['kitchen2','Kitchen'],['counselling2','Counselling'],['notify','Notifications'],['payments','Payment Received']];
   const all=[...REPORTS,...extra.filter(x=>!REPORTS.some(r=>r[0]===x[0]))];
-  const attendanceFilter=repType==='attendance2'?`<div><label>Show</label><select onchange="attReportFilter=this.value;render()" value="${attReportFilter}"><option value="all" ${attReportFilter==='all'?'selected':''}>All</option><option value="yes" ${attReportFilter==='yes'?'selected':''}>Present only</option><option value="no" ${attReportFilter==='no'?'selected':''}>Absent only</option></select></div>`:'';
+  const attendanceFilter=repType==='attendance2'?`<div><label>Attendance status</label><select onchange="attReportFilter=this.value;render()"><option value="all" ${attReportFilter==='all'?'selected':''}>All</option><option value="yes" ${attReportFilter==='yes'?'selected':''}>Present only</option><option value="no" ${attReportFilter==='no'?'selected':''}>Absent only</option></select></div>`:'';
   document.getElementById('view').innerHTML=`<h2 class="sec">Reports <span class="muted">- ${curCenterObj().name}</span></h2><div class="card"><div class="repbtns">${all.map(([k,l])=>`<button class="${k===repType?'on':''}" onclick="repType='${k}';render()">${l}</button>`).join('')}</div><div class="flex" style="margin-bottom:6px"><div><label>From</label><input id="rep_from_in" type="date" value="${repFrom}"></div><div><label>To</label><input id="rep_to_in" type="date" value="${repTo}"></div>${attendanceFilter}<button class="btn sm" onclick="repFrom=v('rep_from_in');repTo=v('rep_to_in');render()">Apply</button><button class="btn blue right" onclick="printReport()">Print / PDF</button><button class="btn ghost" onclick="csvReport()">CSV</button></div><div id="repout"></div></div>`;
   renderReport();
 };
