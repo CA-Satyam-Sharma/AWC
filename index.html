@@ -1657,6 +1657,7 @@ function oldCardVisitLabelForRecord(m,rec){
 }
 function memberVisitLabelForRecord(m,rec){
   if(rec.dailyCharge)return 'Daily';
+  if((m.status||'')==='Guest')return 'Guest';
   const oldLabel=oldCardVisitLabelForRecord(m,rec);
   if(oldLabel)return oldLabel;
   const u=cardUsage(m),status=m.status||'';
@@ -1678,6 +1679,7 @@ function memberCardVisitLabel(m,date,cid=curCenter){
 function cardCanAttendWithoutDaily(m,date){
   if(!m||m.status==='Inactive')return false;
   if(memberPresentAt(m,date,curCenter))return true;
+  if(m.status==='Guest')return true;
   if(m.status==='No Card')return false;
   const u=cardUsage(m);
   if(!u)return false;
@@ -1732,10 +1734,63 @@ function attendanceMatrix(){
   let rows=members.map(m=>{const vals=dates.map(d=>memberCardVisitLabels(m,d,cid)),records=dates.flatMap(d=>attendanceRecordsInRange(m,d,d,cid));const present=vals.some(Boolean),outside=records.some(a=>a.centerId&&a.centerId!==m.centerId);return {m,vals,present,outside};});
   if(attReportFilter==='yes')rows=rows.filter(r=>r.present);
   if(attReportFilter==='no')rows=rows.filter(r=>!r.present);
-  const out=rows.map(r=>[r.m.code,r.m.name,centerLabel(r.m.centerId),r.outside?'Outside':'Home',...r.vals,r.vals.filter(Boolean).length]);
+  const out=rows.map(r=>[r.m.code,r.m.name,centerLabel(r.m.centerId),r.m.status==='Guest'?'Guest':(r.outside?'Outside':'Home'),...r.vals,r.vals.filter(Boolean).length]);
   const guests=guestRows(from,to,cid).map(g=>['GUEST',g.name,centerLabel(g.centerId),'Guest',...dates.map(d=>g.date===d?'Guest':''),1]);
   return {title:`Attendance ${from} to ${to} - ${centerLabel(cid)}`,head:['Code','Name','Home center','Type',...dates,'Total'],rows:[...out,...guests],foot:null};
 }
+const guestMemberCardStatusOptionsBase=cardStatusOptions;
+cardStatusOptions=function(selected=''){
+  return `<option value="Guest" ${selected==='Guest'?'selected':''}>Guest / Lead - no card yet</option>`+guestMemberCardStatusOptionsBase(selected);
+};
+const guestMemberCardChoiceScriptBase=cardChoiceScript;
+cardChoiceScript=function(prefix){
+  return guestMemberCardChoiceScriptBase(prefix)+`;{const gs=document.getElementById('${prefix}_status')?.value,gn=document.getElementById('${prefix}_cardnote'),gc=document.getElementById('${prefix}_charge'),gr=document.getElementById('${prefix}_received');if(gs==='Guest'){if(gn){gn.style.display='block';gn.innerHTML='Guest / Lead: visible in attendance reports. Convert to Trial, Silver or Gold when they start.';}if(gc)gc.value=0;if(gr&&gr.dataset.auto!=='0')gr.value=0;}}`;
+};
+const guestMemberCardUiChangedBase=cardUiChanged;
+cardUiChanged=function(prefix){
+  guestMemberCardUiChangedBase(prefix);
+  const st=document.getElementById(prefix+'_status')?.value,note=document.getElementById(prefix+'_cardnote'),charge=document.getElementById(prefix+'_charge'),recv=document.getElementById(prefix+'_received'),serv=document.getElementById(prefix+'_servingnote');
+  if(st==='Guest'){
+    if(note){note.style.display='block';note.innerHTML='Guest / Lead: visible in attendance reports. Convert to Trial, Silver or Gold when they start.';}
+    if(charge)charge.value=0;
+    if(recv&&recv.dataset.auto!=='0'){recv.value=0;recv.dataset.auto='1';}
+    if(serv&&serv.dataset.manual!=='1')serv.value='Guest / Lead - no serving until Trial/Card starts';
+  }
+};
+const guestMemberCardPackageOptionsForBase=cardPackageOptionsFor;
+cardPackageOptionsFor=function(status,selected){
+  if(status==='Guest')return `<option value="basic_protein" ${selected==='basic_protein'?'selected':''}>Guest / Lead</option>`;
+  return guestMemberCardPackageOptionsForBase(status,selected);
+};
+const guestMemberCardPackageLabelBase=cardPackageLabel;
+cardPackageLabel=function(m){return m?.status==='Guest'?'Guest / Lead':guestMemberCardPackageLabelBase(m);};
+const guestMemberCardServingTextBase=cardServingText;
+cardServingText=function(m){return m?.status==='Guest'?'No serving until Trial/Card starts':guestMemberCardServingTextBase(m);};
+const guestMemberCardMetaFieldsBase=cardMetaFields;
+cardMetaFields=function(prefix,m={}){
+  const html=guestMemberCardMetaFieldsBase(prefix,m);
+  return html+`<div class="tier-note" style="grid-column:1/-1">Guest / Lead is for enquiry/visitor tracking only. For 4-day trial, select Trial so visits show as 1T, 2T, 3T, 4T.</div>`;
+};
+const guestMemberBuildReportBase=buildReport;
+buildReport=function(){
+  if(repType==='guestMembers'){
+    const from=repFrom||repTo||today(),to=repTo||repFrom||today(),cid=role==='head'&&curCenterObj()?.isHeadOffice?'all':curCenter;
+    const rows=(S.members||[]).filter(m=>m.status==='Guest'&&(cid==='all'||m.centerId===cid)).map(m=>{
+      const visits=attendanceRecordsInRange(m,from,to,cid).map(a=>a.date).join(', ');
+      return [m.code,m.name,m.mobile||'',centerLabel(m.centerId),m.referredByText||referralLabel(m)||'',m.joinedAt||'',visits||'-'];
+    });
+    return {title:`Guest / Lead Members ${from} to ${to}`,head:['Code','Name','Mobile','Center','Referred by','Created / start','Visits in period'],rows};
+  }
+  return guestMemberBuildReportBase();
+};
+const guestMemberViewReportsBase=viewReports;
+viewReports=function(){
+  guestMemberViewReportsBase();
+  const btns=document.querySelector('.repbtns');
+  if(btns&&!btns.querySelector('[data-report="guestMembers"]')){
+    btns.insertAdjacentHTML('beforeend',`<button data-report="guestMembers" class="${repType==='guestMembers'?'on':''}" onclick="repType='guestMembers';render()">Guest / Leads</button>`);
+  }
+};
 const attendanceReportsBuildBase=buildReport;
 buildReport=function(){
   if(repType==='attendance2')return attendanceMatrix();
@@ -1757,7 +1812,7 @@ renderReport=function(){
 };
 viewReports=function(){
   if(!repTo)repTo=today();
-  const extra=[['health','Health'],['attendance2','Attendance'],['outsideVisits','Outside Visits'],['kitchen2','Kitchen'],['counselling2','Counselling'],['notify','Notifications'],['payments','Payment Received']];
+  const extra=[['health','Health'],['attendance2','Attendance'],['outsideVisits','Outside Visits'],['guestMembers','Guest / Leads'],['kitchen2','Kitchen'],['counselling2','Counselling'],['notify','Notifications'],['payments','Payment Received']];
   const all=[...REPORTS,...extra.filter(x=>!REPORTS.some(r=>r[0]===x[0]))];
   const attendanceFilter=repType==='attendance2'?`<div><label>Attendance status</label><select onchange="attReportFilter=this.value;render()"><option value="all" ${attReportFilter==='all'?'selected':''}>All</option><option value="yes" ${attReportFilter==='yes'?'selected':''}>Present only</option><option value="no" ${attReportFilter==='no'?'selected':''}>Absent only</option></select></div>`:'';
   document.getElementById('view').innerHTML=`<h2 class="sec">Reports <span class="muted">- ${curCenterObj().name}</span></h2><div class="card"><div class="repbtns">${all.map(([k,l])=>`<button class="${k===repType?'on':''}" onclick="repType='${k}';render()">${l}</button>`).join('')}</div><div class="flex" style="margin-bottom:6px"><div><label>From</label><input id="rep_from_in" type="date" value="${repFrom}"></div><div><label>To</label><input id="rep_to_in" type="date" value="${repTo}"></div>${attendanceFilter}<button class="btn" onclick="reportApplyDates()">Apply date filter</button><button class="btn blue right" onclick="printReport()">Print / PDF</button><button class="btn ghost" onclick="csvReport()">CSV</button></div><div id="repout"></div></div>`;
@@ -1775,7 +1830,7 @@ viewKitchen=function(){
 };
 viewAttendance=function(){
   if(!attDate)attDate=today();const ms=allSearchableMembers().filter(attendanceMatches);
-  document.getElementById('view').innerHTML=`<div class="page-head"><div><h2>Attendance Desk</h2><p>Search any member by name or unique ID. Visits are recorded against the current center.</p></div><div class="flex"><input type="date" value="${attDate}" onchange="attDate=this.value;render()" style="max-width:170px"><button class="btn ghost" onclick="guestVisitModal()">+ New guest</button></div></div><div class="workflow-guide"><div><b>Trial</b><span>Reports show trial visits as 1T, 2T, 3T.</span></div><div><b>No active card</b><span>Daily charge Rs 500 must be accepted before attendance.</span></div><div><b>Outside center</b><span>Home and visit center are stored for settlement.</span></div></div><div class="card"><label>Search name, father name, mobile, unique ID, coach or Herbalife ID</label><div class="flex"><input id="att_search" value="${attendanceSearch}" placeholder="Enter member name or ID" onkeydown="if(event.key==='Enter'){attendanceSearch=this.value;render()}" style="flex:1"><button class="btn ghost" onclick="attendanceSearch=v('att_search');render()">Search</button></div><div style="margin-top:12px">${ms.slice(0,25).map(m=>{const present=memberPresentAt(m,attDate,curCenter),cs=checkupState(m,attDate),pending=S.healthFormTasks.some(t=>t.memberId===m.id&&t.status==='pending'&&t.centerId===curCenter),label=memberCardVisitLabel(m,attDate,curCenter);return `<div class="search-result-card"><div class="flex" style="justify-content:space-between;align-items:flex-start"><div><h3>${m.name} <span class="muted">${m.code}</span>${memberHomeNote(m)}</h3><div class="mini-metric">Father: ${m.fatherName||'-'} | Mobile: ${m.mobile} | Coach: ${m.assignedCoachId||'-'} | Visit: ${label||'-'}</div></div><div class="${cs.due?'due-banner':'ok-banner'}">${cs.label}</div></div><div class="flex" style="margin-top:12px">${present?`<span class="pill ok">Present ${label}</span><button class="btn sm ghost" onclick="unmarkAttend('${m.id}')">Undo</button>`:`<button class="btn sm" onclick="markAttendDate('${m.id}')">Mark present</button>`}${pending?'<span class="pill partial">Checkup pending</span>':`<button class="btn sm ${cs.due?'warn':'ghost'}" onclick="requestHealthForm('${m.id}')">Send for checkup</button>`}${hasModule('healthforms')?`<button class="btn sm ghost" onclick="openHealthForm('${m.id}','')">Fill form</button>`:''}</div></div>`;}).join('')||'<div class="empty">No member found.</div>'}</div></div>`;
+  document.getElementById('view').innerHTML=`<div class="page-head"><div><h2>Attendance Desk</h2><p>Search any member by name or unique ID. Visits are recorded against the current center.</p></div><div class="flex"><input type="date" value="${attDate}" onchange="attDate=this.value;render()" style="max-width:170px"><button class="btn ghost" onclick="addMemberModal()">+ Add member / guest</button></div></div><div class="workflow-guide"><div><b>Guest / Lead</b><span>Add as member status Guest; reports separate them from card members.</span></div><div><b>Trial</b><span>Use Trial for 4-day card so visits show 1T, 2T, 3T.</span></div><div><b>Card sale</b><span>Edit member to Silver/Gold when they choose a paid card.</span></div></div><div class="card"><label>Search name, father name, mobile, unique ID, coach or Herbalife ID</label><div class="flex"><input id="att_search" value="${attendanceSearch}" placeholder="Enter member name or ID" onkeydown="if(event.key==='Enter'){attendanceSearch=this.value;render()}" style="flex:1"><button class="btn ghost" onclick="attendanceSearch=v('att_search');render()">Search</button></div><div style="margin-top:12px">${ms.slice(0,25).map(m=>{const present=memberPresentAt(m,attDate,curCenter),cs=checkupState(m,attDate),pending=S.healthFormTasks.some(t=>t.memberId===m.id&&t.status==='pending'&&t.centerId===curCenter),label=memberCardVisitLabel(m,attDate,curCenter);return `<div class="search-result-card"><div class="flex" style="justify-content:space-between;align-items:flex-start"><div><h3>${m.name} <span class="muted">${m.code}</span>${memberHomeNote(m)}</h3><div class="mini-metric">Father: ${m.fatherName||'-'} | Mobile: ${m.mobile} | Status: ${m.status||'-'} | Visit: ${label||'-'}</div></div><div class="${cs.due?'due-banner':'ok-banner'}">${cs.label}</div></div><div class="flex" style="margin-top:12px">${present?`<span class="pill ok">Present ${label}</span><button class="btn sm ghost" onclick="unmarkAttend('${m.id}')">Undo</button>`:`<button class="btn sm" onclick="markAttendDate('${m.id}')">Mark present</button>`}<button class="btn sm ghost" onclick="editMemberModal('${m.id}')">Edit / convert card</button>${pending?'<span class="pill partial">Checkup pending</span>':`<button class="btn sm ${cs.due?'warn':'ghost'}" onclick="requestHealthForm('${m.id}')">Send for checkup</button>`}${hasModule('healthforms')?`<button class="btn sm ghost" onclick="openHealthForm('${m.id}','')">Fill form</button>`:''}</div></div>`;}).join('')||'<div class="empty">No member found.</div>'}</div></div>`;
 };
 Object.assign(VIEWS,{attendance:viewAttendance,kitchen:viewKitchen,reports:viewReports});
 
