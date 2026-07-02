@@ -1634,6 +1634,110 @@ saveEditMember=function(id){
   if(m&&hasRefText){m.referredByText=manualRef;if(manualRef&&!m.referredById)m.referralSource='Referral';save();}
 };
 
+/* Attendance center tracking, guests, daily charge and cleaner reports */
+let attReportFilter='all';
+function htmlSafe(x){return String(x==null?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function attendanceCenterId(a,m){return a?.centerId||a?.visitCenterId||m?.centerId||'';}
+function attendanceAtCenter(m,date,cid=curCenter){return (m.attendance||[]).find(a=>{const d=typeof a==='string'?a:a?.date;return d===date&&(cid==='all'||attendanceCenterId(a,m)===cid);});}
+memberPresentAt=function(m,date,cid=curCenter){return !!attendanceAtCenter(m,date,cid);};
+function normalizeAttendanceRecord(m,a){if(typeof a==='string')return {date:a,centerId:m.centerId,homeCenterId:m.centerId,source:'legacy'};return {...a,centerId:attendanceCenterId(a,m),homeCenterId:a.homeCenterId||m.centerId};}
+function attendanceRecordsInRange(m,from,to,cid=curCenter){return (m.attendance||[]).map(a=>normalizeAttendanceRecord(m,a)).filter(a=>(!from||a.date>=from)&&(!to||a.date<=to)&&(cid==='all'||a.centerId===cid));}
+function dateRangeList(from,to){const s=from||to||today(),e=to||from||today(),out=[];let d=new Date(s+'T00:00:00');const end=new Date(e+'T00:00:00');while(d<=end&&out.length<62){out.push(d.toISOString().slice(0,10));d.setDate(d.getDate()+1);}return out;}
+function memberCardVisitLabel(m,date,cid=curCenter){
+  const rec=attendanceAtCenter(m,date,cid);if(!rec)return '';
+  const u=cardUsage(m),status=m.status||'',records=attendanceRecordsInRange(m,'',date,'all').filter(a=>!u||a.date>=u.start).sort((a,b)=>(a.date+a.centerId).localeCompare(b.date+b.centerId));
+  const idx=Math.max(1,records.findIndex(a=>a.date===date&&a.centerId===attendanceCenterId(rec,m))+1);
+  if(status==='Trial')return idx+'T';
+  if(status==='No Card'||rec.dailyCharge)return 'Daily';
+  if(u)return Math.min(idx,u.total)+'/'+u.total;
+  return 'Guest';
+}
+function cardCanAttendWithoutDaily(m,date){
+  if(!m||m.status==='Inactive')return false;
+  if(memberPresentAt(m,date,curCenter))return true;
+  if(m.status==='No Card')return false;
+  const u=cardUsage(m);
+  if(!u)return false;
+  if(date<u.start)return false;
+  const usedBefore=new Set((m.attendance||[]).map(a=>normalizeAttendanceRecord(m,a)).filter(a=>a.date>=u.start&&a.date<date).map(a=>a.date+'|'+a.centerId)).size;
+  return usedBefore<u.total;
+}
+function addMemberPaymentRow(m,{date,amount,mode,remarks,cardStatus,packageName}){
+  S.memberPayments=S.memberPayments||[];
+  const row={id:'MP'+Date.now()+Math.floor(Math.random()*999),date,mode,amount,charge:amount,remarks,centerId:curCenter,memberId:m.id,memberName:m.name,cardStatus:cardStatus||m.status||'No Card',packageName:packageName||cardPackageLabel(m),updatedAt:new Date().toISOString(),updatedBy:curUser?.username||'system'};
+  S.memberPayments.push(row);
+  return row;
+}
+function dailyChargeModal(id){
+  const m=member(id);if(!m)return;
+  openModal(`<div class="flex" style="justify-content:space-between"><h3>Daily Charge Required</h3><span class="x" onclick="closeModal()">x</span></div><div class="tier-note"><b>${htmlSafe(m.name)}</b> has no usable active card for ${attDate}. Daily Charge Rs 500 applicable.</div><div class="grid2" style="margin-top:10px"><div><label>Payment mode</label><select id="dc_mode"><option>Cash</option><option>UPI</option><option>Card</option><option>Bank Transfer</option><option>Other</option></select></div><div><label>Amount</label><input id="dc_amount" type="number" value="500"></div></div><div style="text-align:right;margin-top:12px"><button class="btn ghost" onclick="closeModal()">No, do not mark</button><button class="btn" onclick="confirmDailyCharge('${id}')">Yes, payment received</button></div>`);
+}
+function confirmDailyCharge(id){
+  const m=member(id),amount=+v('dc_amount')||500,mode=v('dc_mode')||'Cash';if(!m)return;
+  if(memberPresentAt(m,attDate,curCenter)){closeModal();return toast('Already marked for this center/date');}
+  m.attendance=m.attendance||[];
+  m.attendance.push({date:attDate,centerId:curCenter,homeCenterId:m.centerId,dailyCharge:true,amount,mode,markedBy:curUser?.username||'system',markedAt:new Date().toISOString(),source:'daily-charge'});
+  addMemberPaymentRow(m,{date:attDate,amount,mode,remarks:'Daily Charge Rs 500 - no usable active card',cardStatus:'No Card',packageName:'Daily Charge'});
+  m.updatedBy=curUser?.username||'system';m.updatedAt=new Date().toISOString();
+  save();closeModal();render();toast('Daily charge received and attendance marked');
+}
+markAttendDate=function(id){
+  const m=member(id);if(!m)return;
+  if(!attDate)attDate=today();
+  if(memberPresentAt(m,attDate,curCenter))return toast('Already marked today at this center');
+  if(!cardCanAttendWithoutDaily(m,attDate))return dailyChargeModal(id);
+  m.attendance=m.attendance||[];
+  m.attendance.push({date:attDate,centerId:curCenter,homeCenterId:m.centerId,markedBy:curUser?.username||'system',markedAt:new Date().toISOString()});
+  m.updatedBy=curUser?.username||'system';m.updatedAt=new Date().toISOString();
+  save();render();toast('Attendance marked at '+centerLabel(curCenter));
+};
+unmarkAttend=function(id){const m=member(id);if(!m)return;m.attendance=(m.attendance||[]).filter(a=>{const r=normalizeAttendanceRecord(m,a);return !(r.date===attDate&&r.centerId===curCenter);});save();render();toast('Removed from this center/date');};
+function guestVisitModal(){openModal(`<div class="flex" style="justify-content:space-between"><h3>New Guest Visit</h3><span class="x" onclick="closeModal()">x</span></div><div class="grid2"><div><label>Guest name</label><input id="gv_name"></div><div><label>Mobile</label><input id="gv_mobile"></div><div><label>Date</label><input id="gv_date" type="date" value="${attDate||today()}"></div><div><label>Invited by / remarks</label><input id="gv_note"></div></div><div style="text-align:right;margin-top:12px"><button class="btn" onclick="saveGuestVisit()">Save guest visit</button></div>`);}
+function saveGuestVisit(){const name=v('gv_name').trim(),date=v('gv_date')||attDate||today();if(!name)return toast('Guest name required');S.guestVisits=S.guestVisits||[];S.guestVisits.push({id:'GV'+Date.now(),date,centerId:curCenter,name,mobile:v('gv_mobile'),note:v('gv_note'),createdBy:curUser?.username||'system',createdAt:new Date().toISOString()});save();closeModal();render();toast('Guest visit saved');}
+function guestRows(from,to,cid=curCenter){return (S.guestVisits||[]).filter(g=>(!from||g.date>=from)&&(!to||g.date<=to)&&(cid==='all'||g.centerId===cid));}
+function attendanceMatrix(){
+  const from=repFrom||repTo||today(),to=repTo||repFrom||today(),dates=dateRangeList(from,to),cid=role==='head'&&curCenterObj()?.isHeadOffice?'all':curCenter;
+  const members=(role==='head'?S.members:allSearchableMembers()).slice().sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  let rows=members.map(m=>{const vals=dates.map(d=>memberCardVisitLabel(m,d,cid));const present=vals.some(Boolean);return {m,vals,present};});
+  if(attReportFilter==='yes')rows=rows.filter(r=>r.present);
+  if(attReportFilter==='no')rows=rows.filter(r=>!r.present);
+  const out=rows.map(r=>[r.m.code,r.m.name,centerLabel(r.m.centerId),r.m.centerId===(cid==='all'?r.m.centerId:cid)?'Home':'Outside',...r.vals,r.vals.filter(Boolean).length]);
+  const guests=guestRows(from,to,cid).map(g=>['GUEST',g.name,centerLabel(g.centerId),'Guest',...dates.map(d=>g.date===d?'Guest':''),1]);
+  return {title:`Attendance ${from} to ${to} - ${centerLabel(cid)}`,head:['Code','Name','Home center','Type',...dates,'Total'],rows:[...out,...guests],foot:null};
+}
+const attendanceReportsBuildBase=buildReport;
+buildReport=function(){
+  if(repType==='attendance2')return attendanceMatrix();
+  if(repType==='outsideVisits'){
+    const from=repFrom||repTo||today(),to=repTo||repFrom||today(),rows=[];
+    (S.members||[]).forEach(m=>attendanceRecordsInRange(m,from,to,'all').forEach(a=>{if(a.centerId&&a.centerId!==m.centerId)rows.push([a.date,m.code,m.name,centerLabel(m.centerId),centerLabel(a.centerId),memberCardVisitLabel(m,a.date,a.centerId)]);}));
+    return {title:`Outside Center Visits ${from} to ${to}`,head:['Date','Code','Member','Home center','Visited center','Visit'],rows};
+  }
+  return attendanceReportsBuildBase();
+};
+const attendanceReportsViewBase=viewReports;
+viewReports=function(){
+  if(!repTo)repTo=today();
+  const extra=[['health','Health'],['attendance2','Attendance'],['outsideVisits','Outside Visits'],['kitchen2','Kitchen'],['counselling2','Counselling'],['notify','Notifications'],['payments','Payment Received']];
+  const all=[...REPORTS,...extra.filter(x=>!REPORTS.some(r=>r[0]===x[0]))];
+  const attendanceFilter=repType==='attendance2'?`<div><label>Show</label><select onchange="attReportFilter=this.value;render()" value="${attReportFilter}"><option value="all" ${attReportFilter==='all'?'selected':''}>All</option><option value="yes" ${attReportFilter==='yes'?'selected':''}>Present only</option><option value="no" ${attReportFilter==='no'?'selected':''}>Absent only</option></select></div>`:'';
+  document.getElementById('view').innerHTML=`<h2 class="sec">Reports <span class="muted">- ${curCenterObj().name}</span></h2><div class="card"><div class="repbtns">${all.map(([k,l])=>`<button class="${k===repType?'on':''}" onclick="repType='${k}';render()">${l}</button>`).join('')}</div><div class="flex" style="margin-bottom:6px"><div><label>From</label><input id="rep_from_in" type="date" value="${repFrom}"></div><div><label>To</label><input id="rep_to_in" type="date" value="${repTo}"></div>${attendanceFilter}<button class="btn sm" onclick="repFrom=v('rep_from_in');repTo=v('rep_to_in');render()">Apply</button><button class="btn blue right" onclick="printReport()">Print / PDF</button><button class="btn ghost" onclick="csvReport()">CSV</button></div><div id="repout"></div></div>`;
+  renderReport();
+};
+function kitchenMatrix(){
+  const present=allSearchableMembers().filter(m=>memberPresentAt(m,attDate,curCenter)&&m.status!=='Inactive'),valid=present.filter(m=>cardUsableOnDate(m,attDate)),hidden=present.filter(m=>!cardUsableOnDate(m,attDate));
+  return {valid,hidden,head:['Member','Home center','Visit center','Card','Afresh','Balance','Center serving','Service'],rows:valid.map(m=>{const rec=kitchenRecordFor(m,attDate),u=cardUsage(m);return [m.name,centerLabel(m.centerId),centerLabel(curCenter),cardPackageLabel(m),m.afreshPreference||'Hot',u?Math.max(0,u.remaining)+' left':'-',m.centerServingNote||defaultServingNote(m,m.status,m.cardPackageId,m.afreshPreference),rec?rec.status:'Pending'];})};
+}
+function csvKitchen(){const k=kitchenMatrix();downloadCSV('kitchen_'+(attDate||today())+'.csv',k.head,k.rows);}
+viewKitchen=function(){
+  if(!attDate)attDate=today();const k=kitchenMatrix();
+  document.getElementById('view').innerHTML=`<div class="page-head"><div><h2>Kitchen Today</h2><p>Present members are served by their card/no-card package. Home diet advice stays separate.</p></div><div class="flex"><input type="date" value="${attDate}" onchange="attDate=this.value;render()"><button class="btn ghost" onclick="csvKitchen()">CSV</button></div></div><div class="workflow-guide"><div><b>Afresh</b><span>Hot/Cold preference appears from Reception.</span></div><div><b>Serving</b><span>Use card package details here, including Trial and No Card.</span></div><div><b>Payment control</b><span>Expired/no active card members are listed below.</span></div></div><div class="card"><div class="tablewrap">${tableToHTML(k.head,k.rows.map(r=>[...r.slice(0,7),r[7]==='Pending'?`<button class="btn sm" onclick="markKitchen('${k.valid.find(m=>m.name===r[0])?.id}','served')">Mark served</button>`:`<span class="pill ok">${r[7]}</span>`]))}</div>${!k.rows.length?'<div class="empty">No valid card/no-card members to serve for this date. Mark attendance first or renew at Reception.</div>':''}${k.hidden.length?`<div class="tier-note" style="margin-top:10px"><b>${k.hidden.length} present member(s) not shown for serving:</b><div class="tablewrap" style="margin-top:8px">${tableToHTML(['Member','Home center','Status','Reason'],k.hidden.map(m=>[m.name,centerLabel(m.centerId),m.status||'-',m.status==='Inactive'?'Inactive':'Card expired or no usable active card']))}</div></div>`:''}</div>`;
+};
+viewAttendance=function(){
+  if(!attDate)attDate=today();const ms=allSearchableMembers().filter(attendanceMatches);
+  document.getElementById('view').innerHTML=`<div class="page-head"><div><h2>Attendance Desk</h2><p>Search any member by name or unique ID. Visits are recorded against the current center.</p></div><div class="flex"><input type="date" value="${attDate}" onchange="attDate=this.value;render()" style="max-width:170px"><button class="btn ghost" onclick="guestVisitModal()">+ New guest</button></div></div><div class="workflow-guide"><div><b>Trial</b><span>Reports show trial visits as 1T, 2T, 3T.</span></div><div><b>No active card</b><span>Daily charge Rs 500 must be accepted before attendance.</span></div><div><b>Outside center</b><span>Home and visit center are stored for settlement.</span></div></div><div class="card"><label>Search name, father name, mobile, unique ID, coach or Herbalife ID</label><div class="flex"><input id="att_search" value="${attendanceSearch}" placeholder="Enter member name or ID" onkeydown="if(event.key==='Enter'){attendanceSearch=this.value;render()}" style="flex:1"><button class="btn ghost" onclick="attendanceSearch=v('att_search');render()">Search</button></div><div style="margin-top:12px">${ms.slice(0,25).map(m=>{const present=memberPresentAt(m,attDate,curCenter),cs=checkupState(m,attDate),pending=S.healthFormTasks.some(t=>t.memberId===m.id&&t.status==='pending'&&t.centerId===curCenter),label=memberCardVisitLabel(m,attDate,curCenter);return `<div class="search-result-card"><div class="flex" style="justify-content:space-between;align-items:flex-start"><div><h3>${m.name} <span class="muted">${m.code}</span>${memberHomeNote(m)}</h3><div class="mini-metric">Father: ${m.fatherName||'-'} | Mobile: ${m.mobile} | Coach: ${m.assignedCoachId||'-'} | Visit: ${label||'-'}</div></div><div class="${cs.due?'due-banner':'ok-banner'}">${cs.label}</div></div><div class="flex" style="margin-top:12px">${present?`<span class="pill ok">Present ${label}</span><button class="btn sm ghost" onclick="unmarkAttend('${m.id}')">Undo</button>`:`<button class="btn sm" onclick="markAttendDate('${m.id}')">Mark present</button>`}${pending?'<span class="pill partial">Checkup pending</span>':`<button class="btn sm ${cs.due?'warn':'ghost'}" onclick="requestHealthForm('${m.id}')">Send for checkup</button>`}${hasModule('healthforms')?`<button class="btn sm ghost" onclick="openHealthForm('${m.id}','')">Fill form</button>`:''}</div></div>`;}).join('')||'<div class="empty">No member found.</div>'}</div></div>`;
+};
+
 /* Supabase shared-state backend */
 const SUPABASE_BACKEND={
   url:'https://qesvwjrnqjszcrrlhvfw.supabase.co',
