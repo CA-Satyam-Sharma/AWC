@@ -1643,14 +1643,22 @@ memberPresentAt=function(m,date,cid=curCenter){return !!attendanceAtCenter(m,dat
 function normalizeAttendanceRecord(m,a){if(typeof a==='string')return {date:a,centerId:m.centerId,homeCenterId:m.centerId,source:'legacy'};return {...a,centerId:attendanceCenterId(a,m),homeCenterId:a.homeCenterId||m.centerId};}
 function attendanceRecordsInRange(m,from,to,cid=curCenter){return (m.attendance||[]).map(a=>normalizeAttendanceRecord(m,a)).filter(a=>(!from||a.date>=from)&&(!to||a.date<=to)&&(cid==='all'||a.centerId===cid));}
 function dateRangeList(from,to){const s=from||to||today(),e=to||from||today(),out=[];let d=new Date(s+'T00:00:00');const end=new Date(e+'T00:00:00');while(d<=end&&out.length<62){out.push(d.toISOString().slice(0,10));d.setDate(d.getDate()+1);}return out;}
-function memberCardVisitLabel(m,date,cid=curCenter){
-  const rec=attendanceAtCenter(m,date,cid);if(!rec)return '';
-  const u=cardUsage(m),status=m.status||'',records=attendanceRecordsInRange(m,'',date,'all').filter(a=>!u||a.date>=u.start).sort((a,b)=>(a.date+a.centerId).localeCompare(b.date+b.centerId));
-  const idx=Math.max(1,records.findIndex(a=>a.date===date&&a.centerId===attendanceCenterId(rec,m))+1);
+function memberVisitLabelForRecord(m,rec){
+  const u=cardUsage(m),status=m.status||'';
+  const records=attendanceRecordsInRange(m,'',rec.date,'all').filter(a=>!u||a.date>=u.start).sort((a,b)=>(a.date+a.centerId).localeCompare(b.date+b.centerId));
+  const idx=Math.max(1,records.findIndex(a=>a.date===rec.date&&a.centerId===rec.centerId)+1);
   if(status==='Trial')return idx+'T';
   if(status==='No Card'||rec.dailyCharge)return 'Daily';
   if(u)return Math.min(idx,u.total)+'/'+u.total;
-  return 'Guest';
+  return 'No active card';
+}
+function memberCardVisitLabels(m,date,cid=curCenter){
+  const records=attendanceRecordsInRange(m,date,date,cid);
+  if(!records.length)return '';
+  return [...new Set(records.map(rec=>memberVisitLabelForRecord(m,rec)).filter(Boolean))].join(' + ');
+}
+function memberCardVisitLabel(m,date,cid=curCenter){
+  return memberCardVisitLabels(m,date,cid);
 }
 function cardCanAttendWithoutDaily(m,date){
   if(!m||m.status==='Inactive')return false;
@@ -1706,10 +1714,10 @@ csvReport=function(){const m=buildReport();downloadReportCSV(repType+'_report.cs
 function attendanceMatrix(){
   const from=repFrom||repTo||today(),to=repTo||repFrom||today(),dates=dateRangeList(from,to),cid=role==='head'&&curCenterObj()?.isHeadOffice?'all':curCenter;
   const members=(role==='head'?S.members:allSearchableMembers()).slice().sort((a,b)=>String(a.name).localeCompare(String(b.name)));
-  let rows=members.map(m=>{const vals=dates.map(d=>memberCardVisitLabel(m,d,cid));const present=vals.some(Boolean);return {m,vals,present};});
+  let rows=members.map(m=>{const vals=dates.map(d=>memberCardVisitLabels(m,d,cid)),records=dates.flatMap(d=>attendanceRecordsInRange(m,d,d,cid));const present=vals.some(Boolean),outside=records.some(a=>a.centerId&&a.centerId!==m.centerId);return {m,vals,present,outside};});
   if(attReportFilter==='yes')rows=rows.filter(r=>r.present);
   if(attReportFilter==='no')rows=rows.filter(r=>!r.present);
-  const out=rows.map(r=>[r.m.code,r.m.name,centerLabel(r.m.centerId),r.m.centerId===(cid==='all'?r.m.centerId:cid)?'Home':'Outside',...r.vals,r.vals.filter(Boolean).length]);
+  const out=rows.map(r=>[r.m.code,r.m.name,centerLabel(r.m.centerId),r.outside?'Outside':'Home',...r.vals,r.vals.filter(Boolean).length]);
   const guests=guestRows(from,to,cid).map(g=>['GUEST',g.name,centerLabel(g.centerId),'Guest',...dates.map(d=>g.date===d?'Guest':''),1]);
   return {title:`Attendance ${from} to ${to} - ${centerLabel(cid)}`,head:['Code','Name','Home center','Type',...dates,'Total'],rows:[...out,...guests],foot:null};
 }
@@ -1718,7 +1726,7 @@ buildReport=function(){
   if(repType==='attendance2')return attendanceMatrix();
   if(repType==='outsideVisits'){
     const from=repFrom||repTo||today(),to=repTo||repFrom||today(),rows=[];
-    (S.members||[]).forEach(m=>attendanceRecordsInRange(m,from,to,'all').forEach(a=>{if(a.centerId&&a.centerId!==m.centerId)rows.push([a.date,m.code,m.name,centerLabel(m.centerId),centerLabel(a.centerId),memberCardVisitLabel(m,a.date,a.centerId)]);}));
+    (S.members||[]).forEach(m=>attendanceRecordsInRange(m,from,to,'all').forEach(a=>{if(a.centerId&&a.centerId!==m.centerId)rows.push([a.date,m.code,m.name,centerLabel(m.centerId),centerLabel(a.centerId),memberVisitLabelForRecord(m,a)]);}));
     return {title:`Outside Center Visits ${from} to ${to}`,head:['Date','Code','Member','Home center','Visited center','Visit'],rows};
   }
   return attendanceReportsBuildBase();
