@@ -1447,7 +1447,7 @@ function afreshOptions(selected='Hot'){
 }
 cardMetaFields=function(prefix,m={}){
   const status=m.status||'Trial',pkg=m.cardPackageId||'basic_protein',pay=m.cardPayment||{},joined=m.cardPlan?.startDate||m.trial?.startDate||m.joinedAt||'',fresh=m.afreshPreference||'Hot',charge=pay.charge||cardChargeFor(status,pkg);
-  return `<div><label>Joining / card start date</label><input id="${prefix}_joined" type="date" value="${joined}"></div><div id="${prefix}_pkg_box"><label>Card package / serving option</label><select id="${prefix}_cardpkg" onchange="${cardFormScript(prefix)}">${cardPackageOptionsFor(status,pkg)}</select><div class="mini-metric">15 days is Silver, 30 days is Gold. Basic 3+2 with or without protein keeps base price; extra protein/fiber and Dino options auto-price.</div></div><div><label>Afresh preference</label><select id="${prefix}_afresh" onchange="${cardFormScript(prefix)}">${afreshOptions(fresh)}</select></div><div><label>Card charges</label><input id="${prefix}_charge" type="number" value="${charge}" oninput="document.getElementById('${prefix}_received').dataset.auto='0';cardUiChanged('${prefix}')"></div><div><label>Amount received</label><input id="${prefix}_received" type="number" value="${pay.received||charge||''}" data-auto="1" oninput="this.dataset.auto='0'"></div><div><label>Payment mode</label><select id="${prefix}_paymode"><option ${pay.mode==='Cash'?'selected':''}>Cash</option><option ${pay.mode==='UPI'?'selected':''}>UPI</option><option ${pay.mode==='Card'?'selected':''}>Card</option><option ${pay.mode==='Bank Transfer'?'selected':''}>Bank Transfer</option><option ${pay.mode==='Other'?'selected':''}>Other</option></select></div><div><label>Payment date</label><input id="${prefix}_paydate" type="date" value="${pay.date||today()}"></div><div><label>Payment remarks</label><input id="${prefix}_payremarks" value="${pay.remarks||''}"></div><div style="grid-column:1/-1"><label>Center serving note for kitchen</label><input id="${prefix}_servingnote" value="${m.centerServingNote||defaultServingNote(m,status,pkg,fresh)}" oninput="this.dataset.manual='1'"></div>`;
+  return `<div><label>Joining / card start date</label><input id="${prefix}_joined" type="date" value="${joined}"></div><div id="${prefix}_pkg_box"><label>Card package / serving option</label><select id="${prefix}_cardpkg" onchange="${cardFormScript(prefix)}">${cardPackageOptionsFor(status,pkg)}</select><div class="mini-metric">15 days is Silver, 30 days is Gold. Basic 3+2 with or without protein keeps base price; extra protein/fiber and Dino options auto-price.</div></div><div><label>Afresh preference</label><select id="${prefix}_afresh" onchange="${cardFormScript(prefix)}">${afreshOptions(fresh)}</select></div><div><label>Card charges</label><input id="${prefix}_charge" type="number" value="${charge}" oninput="document.getElementById('${prefix}_received').dataset.auto='0';cardUiChanged('${prefix}')"></div><div><label>Amount received</label><input id="${prefix}_received" type="number" value="${pay.received!=null?pay.received:(charge||'')}" data-auto="1" oninput="this.dataset.auto='0'"></div><div><label>Payment mode</label><select id="${prefix}_paymode"><option ${pay.mode==='Cash'?'selected':''}>Cash</option><option ${pay.mode==='UPI'?'selected':''}>UPI</option><option ${pay.mode==='Card'?'selected':''}>Card</option><option ${pay.mode==='Bank Transfer'?'selected':''}>Bank Transfer</option><option ${pay.mode==='Other'?'selected':''}>Other</option></select></div><div><label>Payment date</label><input id="${prefix}_paydate" type="date" value="${pay.date||today()}"></div><div><label>Payment remarks</label><input id="${prefix}_payremarks" value="${pay.remarks||''}"></div><div style="grid-column:1/-1"><label>Center serving note for kitchen</label><input id="${prefix}_servingnote" value="${m.centerServingNote||defaultServingNote(m,status,pkg,fresh)}" oninput="this.dataset.manual='1'"></div>`;
 };
 memberListRows=function(ms){
   return ms.length?ms.map(m=>`<tr><td>${m.code}</td><td class="clik" onclick="editMemberModal('${m.id}')">${m.name}</td><td>${m.fatherName||'-'}</td><td>${m.mobile}</td><td>${memberRefLabel(m)}</td><td>${memberCoachLabel(m)}</td><td>${m.status}</td><td>${cardPackageLabel(m)}</td><td>${cardUsageLabel(m)}</td><td>${cardDueDate(m)||'-'}</td><td class="r"><button class="btn sm ghost" onclick="editMemberModal('${m.id}')">Edit</button> ${memberLedgerButton(m.id)} ${role==='head'?`<button class="btn sm ghost" onclick="moveMemberModal('${m.id}')">Move</button>`:''} <button class="btn sm ghost" onclick="openMember('${m.id}')">Open</button></td></tr>`).join(''):'<tr><td colspan="11" class="empty">No members found.</td></tr>';
@@ -1844,13 +1844,144 @@ function csvKitchen(){const k=kitchenMatrix();downloadCSV('kitchen_'+(attDate||t
 function undoKitchen(id){S.kitchen=(S.kitchen||[]).filter(k=>!(k.id===id));save();render();toast('Kitchen served mark removed');}
 viewKitchen=function(){
   if(!attDate)attDate=today();const k=kitchenMatrix();
-  document.getElementById('view').innerHTML=`<div class="page-head"><div><h2>Kitchen Today</h2><p>Present members are served by their card/no-card package. Home diet advice stays separate.</p></div><div class="flex"><input type="date" value="${attDate}" onchange="attDate=this.value;render()"><button class="btn ghost" onclick="csvKitchen()">Export CSV</button></div></div><div class="workflow-guide"><div><b>Afresh</b><span>Hot/Cold preference appears from Reception.</span></div><div><b>Serving</b><span>Use card package details here, including Trial and No Card. Served entries can be undone.</span></div><div><b>Payment control</b><span>Expired/no active card members are listed below.</span></div></div><div class="card"><div class="tablewrap">${tableToHTML(k.head,k.rows.map(r=>[...r.values.slice(0,7),r.rec?`<span class="pill ok">${r.rec.status}</span> <button class="btn sm bad" onclick="undoKitchen('${r.rec.id}')">Undo served</button>`:`<button class="btn sm" onclick="markKitchen('${r.member.id}','served')">Mark served</button>`]))}</div>${!k.rows.length?'<div class="empty">No valid card/no-card members to serve for this date. Mark attendance first or renew at Reception.</div>':''}${k.hidden.length?`<div class="tier-note" style="margin-top:10px"><b>${k.hidden.length} present member(s) not shown for serving:</b><div class="tablewrap" style="margin-top:8px">${tableToHTML(['Member','Home center','Status','Reason'],k.hidden.map(m=>[m.name,centerLabel(m.centerId),m.status||'-',m.status==='Inactive'?'Inactive':'Card expired or no usable active card']))}</div></div>`:''}</div>`;
+  document.getElementById('view').innerHTML=`<div class="page-head"><div><h2>Kitchen Today</h2><p>Present members are served by their card/no-card package. Home diet advice stays separate.</p></div><div class="flex"><input type="date" value="${attDate}" onchange="attDate=this.value;render()"><button class="btn ghost" onclick="csvKitchen()">Export CSV</button></div></div><div class="workflow-guide"><div><b>Afresh</b><span>Hot/Cold preference appears from Reception.</span></div><div><b>Serving</b><span>Use card package details here, including Trial and No Card. Served entries can be undone.</span></div><div><b>Payment control</b><span>Expired/no active card members are listed below.</span></div></div><div class="card"><div class="tablewrap">${tableToHTML(k.head,k.rows.map(r=>[...r.values.slice(0,k.head.length-1),r.rec?`<span class="pill ok">${r.rec.status}</span> <button class="btn sm bad" onclick="undoKitchen('${r.rec.id}')">Undo served</button>`:`<button class="btn sm" onclick="markKitchen('${r.member.id}','served')">Mark served</button>`]))}</div>${!k.rows.length?'<div class="empty">No valid card/no-card members to serve for this date. Mark attendance first or renew at Reception.</div>':''}${k.hidden.length?`<div class="tier-note" style="margin-top:10px"><b>${k.hidden.length} present member(s) not shown for serving:</b><div class="tablewrap" style="margin-top:8px">${tableToHTML(['Member','Home center','Status','Reason'],k.hidden.map(m=>[m.name,centerLabel(m.centerId),m.status||'-',m.status==='Inactive'?'Inactive':'Card expired or no usable active card']))}</div></div>`:''}</div>`;
 };
 viewAttendance=function(){
   if(!attDate)attDate=today();const ms=allSearchableMembers().filter(attendanceMatches);
   document.getElementById('view').innerHTML=`<div class="page-head"><div><h2>Attendance Desk</h2><p>Search any member by name or unique ID. Visits are recorded against the current center.</p></div><div class="flex"><input type="date" value="${attDate}" onchange="attDate=this.value;render()" style="max-width:170px"><button class="btn ghost" onclick="addMemberModal()">+ Add member / guest</button></div></div><div class="workflow-guide"><div><b>Guest / Lead</b><span>Add as member status Guest; reports separate them from card members.</span></div><div><b>Trial</b><span>Use Trial for 4-day card so visits show 1T, 2T, 3T.</span></div><div><b>Card sale</b><span>Edit member to Silver/Gold when they choose a paid card.</span></div></div><div class="card"><label>Search name, father name, mobile, unique ID, coach or Herbalife ID</label><div class="flex"><input id="att_search" value="${attendanceSearch}" placeholder="Enter member name or ID" onkeydown="if(event.key==='Enter'){attendanceSearch=this.value;render()}" style="flex:1"><button class="btn ghost" onclick="attendanceSearch=v('att_search');render()">Search</button></div><div style="margin-top:12px">${ms.slice(0,25).map(m=>{const present=memberPresentAt(m,attDate,curCenter),cs=checkupState(m,attDate),pending=S.healthFormTasks.some(t=>t.memberId===m.id&&t.status==='pending'&&t.centerId===curCenter),label=memberCardVisitLabel(m,attDate,curCenter);return `<div class="search-result-card"><div class="flex" style="justify-content:space-between;align-items:flex-start"><div><h3>${m.name} <span class="muted">${m.code}</span>${memberHomeNote(m)}</h3><div class="mini-metric">Father: ${m.fatherName||'-'} | Mobile: ${m.mobile} | Status: ${m.status||'-'} | Visit: ${label||'-'}</div></div><div class="${cs.due?'due-banner':'ok-banner'}">${cs.label}</div></div><div class="flex" style="margin-top:12px">${present?`<span class="pill ok">Present ${label}</span><button class="btn sm ghost" onclick="unmarkAttend('${m.id}')">Undo</button>`:`<button class="btn sm" onclick="markAttendDate('${m.id}')">Mark present</button>`}<button class="btn sm ghost" onclick="editMemberModal('${m.id}')">Edit / convert card</button>${pending?'<span class="pill partial">Checkup pending</span>':`<button class="btn sm ${cs.due?'warn':'ghost'}" onclick="requestHealthForm('${m.id}')">Send for checkup</button>`}${hasModule('healthforms')?`<button class="btn sm ghost" onclick="openHealthForm('${m.id}','')">Fill form</button>`:''}</div></div>`;}).join('')||'<div class="empty">No member found.</div>'}</div></div>`;
 };
 Object.assign(VIEWS,{attendance:viewAttendance,kitchen:viewKitchen,reports:viewReports});
+
+/* Card dues and daily-charge visibility */
+function cardChargeAmount(m){return +(m?.cardPayment?.charge||0);}
+function cardReceivedAmount(m){return +(m?.cardPayment?.received||0);}
+function cardDueAmount(m){return Math.max(0,cardChargeAmount(m)-cardReceivedAmount(m));}
+function cardPaymentState(m){
+  const charge=cardChargeAmount(m),received=cardReceivedAmount(m),due=cardDueAmount(m);
+  if(!charge)return {charge,received,due,state:'none',label:'-'};
+  if(due<=0)return {charge,received,due:0,state:'paid',label:`Paid ${rs(received)}`};
+  if(received>0)return {charge,received,due,state:'partial',label:`Partial ${rs(received)} / ${rs(charge)} | Due ${rs(due)}`};
+  return {charge,received,due,state:'due',label:`Due ${rs(due)}`};
+}
+function cardPaymentBadge(m){
+  const p=cardPaymentState(m);
+  if(p.state==='paid')return `<span class="pill ok">${p.label}</span>`;
+  if(p.state==='partial')return `<span class="pill partial">${p.label}</span>`;
+  if(p.state==='due')return `<span class="pill warn">${p.label}</span>`;
+  return '<span class="muted">-</span>';
+}
+function cardPaymentWarningHTML(m){
+  const p=cardPaymentState(m);
+  if(p.state==='due')return `<div class="due-banner" style="margin-top:8px">Card payment pending: ${rs(p.due)}</div>`;
+  if(p.state==='partial')return `<div class="due-banner" style="margin-top:8px">Partial card payment received. Balance due: ${rs(p.due)}</div>`;
+  return '';
+}
+const dueFlowSyncMemberPaymentLedgerBase=syncMemberPaymentLedger;
+syncMemberPaymentLedger=function(m){
+  const pay=m.cardPayment||{},amt=+pay.received||0;
+  if(!amt&&pay.ledgerId){
+    S.memberPayments=(S.memberPayments||[]).filter(x=>x.id!==pay.ledgerId);
+    delete pay.ledgerId;
+    return;
+  }
+  dueFlowSyncMemberPaymentLedgerBase(m);
+};
+cardPaymentLabel=function(m){
+  const p=cardPaymentState(m);
+  if(p.state==='none')return '-';
+  const mode=m?.cardPayment?.mode?` (${m.cardPayment.mode})`:'';
+  return `${rs(p.received)} / ${rs(p.charge)}${mode}${p.due?` | Due ${rs(p.due)}`:' | Paid'}`;
+};
+cardUsageLabel=function(m){
+  const u=cardUsage(m),p=cardPaymentState(m);
+  if(!u)return '-';
+  const day=`${Math.min(u.consumedRaw,u.total)}/${u.total} used · ${Math.max(0,u.remaining)} left${u.overLimit?' · expired':''}`;
+  return p.due?`${day} · ${p.state==='partial'?'partial due':'payment due'}`:day;
+};
+function visitPaymentSuffix(m){
+  const p=cardPaymentState(m);
+  if(p.state==='due')return ' Due';
+  if(p.state==='partial')return ' Partial';
+  return '';
+}
+memberVisitLabelForRecord=function(m,rec){
+  if(rec.dailyCharge)return `Daily Rs ${+rec.amount||500}`;
+  if((m.status||'')==='Guest')return 'Guest';
+  const oldLabel=oldCardVisitLabelForRecord(m,rec);
+  if(oldLabel)return oldLabel;
+  const u=cardUsage(m),status=m.status||'';
+  const records=attendanceRecordsInRange(m,'',rec.date,'all').filter(a=>!u||a.date>=u.start).sort((a,b)=>(a.date+a.centerId).localeCompare(b.date+b.centerId));
+  const idx=Math.max(1,records.findIndex(a=>a.date===rec.date&&a.centerId===rec.centerId)+1);
+  const suffix=visitPaymentSuffix(m);
+  if(status==='Trial')return `${idx}T${suffix}`;
+  if(status==='No Card')return rec.amount?`Daily Rs ${+rec.amount||500}`:'Daily';
+  if(u){const day=Math.min(idx,u.total);return suffix?`${day}${suffix}`:`${day}/${u.total}`;}
+  return 'No active card';
+};
+memberCardVisitLabels=function(m,date,cid=curCenter){
+  const records=attendanceRecordsInRange(m,date,date,cid);
+  if(!records.length)return '';
+  return [...new Set(records.map(rec=>memberVisitLabelForRecord(m,rec)).filter(Boolean))].join(' + ');
+};
+memberCardVisitLabel=function(m,date,cid=curCenter){return memberCardVisitLabels(m,date,cid);};
+const dueFlowComputeMemberLedgerBase=computeMemberLedger;
+computeMemberLedger=function(id,from,to){
+  const m=member(id);
+  const L=dueFlowComputeMemberLedgerBase(id,from,to);
+  if(!m)return L;
+  const extra=(S.memberPayments||[]).filter(p=>p.memberId===id&&p.id!==m.cardPayment?.ledgerId&&(!from||p.date>=from)&&(!to||p.date<=to));
+  if(!extra.length)return L;
+  const rows=[...L.rows];
+  extra.forEach(p=>{
+    const amt=+p.amount||0;if(!amt)return;
+    const daily=String(p.packageName||'').toLowerCase().includes('daily');
+    rows.push({date:p.date||today(),ref:daily?'DAILY':'PAY',desc:`${daily?'Daily charge':'Member payment'} - ${p.mode||'Cash'}${p.remarks?' - '+p.remarks:''}`,debit:daily?amt:0,credit:amt,bal:0,vp:0});
+  });
+  rows.sort((a,b)=>(a.date+a.ref+a.desc).localeCompare(b.date+b.ref+b.desc));
+  let bal=L.opening,tD=0,tC=0,tVp=0;
+  rows.forEach(r=>{if(!r.memo)bal+=(+r.debit||0)-(+r.credit||0);r.bal=r.memo?'':bal;tD+=+r.debit||0;tC+=+r.credit||0;tVp+=+r.vp||0;});
+  return {opening:L.opening,rows,closing:bal,tD,tC,tVp};
+};
+function duesRows(cid=curCenter){
+  return (role==='head'?S.members:visibleMembers()).map(m=>({m,p:cardPaymentState(m),u:cardUsage(m)})).filter(x=>x.p.due>0&&(cid==='all'||x.m.centerId===cid));
+}
+const dueFlowBuildReportBase=buildReport;
+buildReport=function(){
+  if(repType==='dues'){
+    const cid=role==='head'&&curCenterObj()?.isHeadOffice?'all':curCenter;
+    const rows=duesRows(cid).map(({m,p,u})=>[m.code,m.name,centerLabel(m.centerId),m.status,cardPackageLabel(m),u?`${Math.min(u.consumedRaw,u.total)}/${u.total}`:'-',rs(p.charge),rs(p.received),rs(p.due),m.cardPayment?.date||m.joinedAt||'']);
+    return {title:`Card Payment Dues - ${centerLabel(cid)}`,head:['Code','Name','Center','Status','Package','Card use','Charge','Received','Due','Payment date'],rows};
+  }
+  return dueFlowBuildReportBase();
+};
+const dueFlowViewReportsBase=viewReports;
+viewReports=function(){
+  dueFlowViewReportsBase();
+  const btns=document.querySelector('.repbtns');
+  if(btns&&!btns.querySelector('[data-report="dues"]'))btns.insertAdjacentHTML('beforeend',`<button data-report="dues" class="${repType==='dues'?'on':''}" onclick="repType='dues';render()">Dues</button>`);
+};
+function kitchenPaymentLabel(m){return cardPaymentState(m).due?cardPaymentBadge(m):'<span class="pill ok">Paid</span>';}
+const dueFlowKitchenMatrixBase=kitchenMatrix;
+kitchenMatrix=function(){
+  const k=dueFlowKitchenMatrixBase();
+  if(!k.head.includes('Payment'))k.head.splice(6,0,'Payment');
+  k.rows=k.rows.map(r=>{const vals=r.values.slice();vals.splice(6,0,kitchenPaymentLabel(r.member));return {...r,values:vals};});
+  return k;
+};
+const dueFlowViewAttendanceBase=viewAttendance;
+viewAttendance=function(){
+  dueFlowViewAttendanceBase();
+  document.querySelectorAll('.search-result-card').forEach(card=>{
+    const code=card.querySelector('h3 .muted')?.textContent?.trim();
+    const m=(S.members||[]).find(x=>x.code===code);
+    const warn=m?cardPaymentWarningHTML(m):'';
+    const metric=card.querySelector('.mini-metric');
+    if(warn&&metric&&!card.querySelector('.due-banner'))metric.insertAdjacentHTML('afterend',warn);
+  });
+};
+VIEWS.attendance=viewAttendance;
+VIEWS.kitchen=viewKitchen;
+VIEWS.reports=viewReports;
 
 /* Admin card package settings: future rates change here; sold cards keep snapshots */
 function defaultCardSettings(){
