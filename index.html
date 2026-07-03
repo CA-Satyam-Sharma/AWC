@@ -1852,6 +1852,122 @@ viewAttendance=function(){
 };
 Object.assign(VIEWS,{attendance:viewAttendance,kitchen:viewKitchen,reports:viewReports});
 
+/* Admin card package settings: future rates change here; sold cards keep snapshots */
+function defaultCardSettings(){
+  return {
+    addonRates:{extraProteinPerDay:40,halfProteinPerDay:20,extraFiberPerDay:80},
+    statuses:{
+      Trial:{label:'Trial - Basic Protein, 4 days',days:4,charge:1000,enabled:true},
+      'No Card':{label:'No Card - Basic Protein, 1 serving',days:1,charge:500,enabled:true},
+      '15 Days Card':{label:'Silver Card - 15 days',days:15,basicBase:5500,dinoBase:3500,enabled:true},
+      '30 Days Card':{label:'Gold Card - 30 days',days:30,basicBase:9000,dinoBase:7000,enabled:true},
+      'Other Days Card':{label:'Other days card',days:0,charge:0,enabled:true},
+      Active:{label:'Active member',days:0,charge:0,enabled:true},
+      Inactive:{label:'Inactive',days:0,charge:0,enabled:true}
+    },
+    packages:[
+      {id:'basic_protein',name:'Basic 3F1 + 2 ShakeMate + 1 Protein',formula1:3,shakeMate:2,protein:1,fiber:0,dinoShake:0,active:true},
+      {id:'basic_no_protein',name:'Basic 3F1 + 2 ShakeMate - no Protein',formula1:3,shakeMate:2,protein:0,fiber:0,dinoShake:0,active:true},
+      {id:'more_protein',name:'Basic + extra Protein',formula1:3,shakeMate:2,protein:2,fiber:0,dinoShake:0,active:true},
+      {id:'basic_protein_fiber',name:'Basic + extra Fiber',formula1:3,shakeMate:2,protein:1,fiber:1,dinoShake:0,active:true},
+      {id:'more_protein_fiber',name:'Basic + extra Protein + Fiber',formula1:3,shakeMate:2,protein:2,fiber:1,dinoShake:0,active:true},
+      {id:'dino_shakemate',name:'Dino Shake + ShakeMate',formula1:0,shakeMate:2,protein:0,fiber:0,dinoShake:1,active:true},
+      {id:'dino_half_protein',name:'Dino Shake + ShakeMate + half Protein',formula1:0,shakeMate:2,protein:.5,fiber:0,dinoShake:1,active:true}
+    ]
+  };
+}
+function ensureCardSettings(){
+  const d=defaultCardSettings();
+  S.cardSettings=S.cardSettings||{};
+  S.cardSettings.addonRates={...d.addonRates,...(S.cardSettings.addonRates||{})};
+  S.cardSettings.statuses={...d.statuses,...(S.cardSettings.statuses||{})};
+  S.cardSettings.packages=(S.cardSettings.packages&&S.cardSettings.packages.length?S.cardSettings.packages:d.packages).map(p=>({...p,active:p.active!==false}));
+  return S.cardSettings;
+}
+function activePackageSettings(){return ensureCardSettings().packages.filter(p=>p.active!==false);}
+function statusSetting(status){return ensureCardSettings().statuses[status]||{};}
+centerCardPackage=function(id){return ensureCardSettings().packages.find(p=>p.id===id)||ensureCardSettings().packages[0]||CENTER_CARD_PACKAGES[0];};
+cardTierName=function(status){return statusSetting(status).label||status||'';};
+cardTotalForStatus=function(status,otherDays){if(status==='Other Days Card')return Math.max(1,+otherDays||0);return +statusSetting(status).days||0;};
+function computedPackageCharge(status,pkgId,current){
+  const st=statusSetting(status),p=centerCardPackage(pkgId),rates=ensureCardSettings().addonRates,days=+st.days||0;
+  if(status==='Trial'||status==='No Card')return +st.charge||0;
+  if(status==='Other Days Card')return +current||0;
+  if(!days||!p)return 0;
+  const base=(+p.dinoShake||0)>0?(+st.dinoBase||0):(+st.basicBase||0);
+  const baseProtein=(+p.dinoShake||0)>0?0:1;
+  const proteinUnits=Math.max(0,(+p.protein||0)-baseProtein);
+  const proteinExtra=(proteinUnits===0.5?(+rates.halfProteinPerDay||0):proteinUnits*(+rates.extraProteinPerDay||0))*days;
+  const fiberExtra=Math.max(0,+p.fiber||0)*(+rates.extraFiberPerDay||0)*days;
+  return Math.round(base+proteinExtra+fiberExtra);
+}
+cardChargeFor=function(status,pkgId,current){return computedPackageCharge(status,pkgId,current);};
+cardPackageOptionsFor=function(status,selected){
+  if(status==='Guest')return `<option value="basic_protein" ${selected==='basic_protein'?'selected':''}>Guest / Lead</option>`;
+  const keys=(status==='Trial'||status==='No Card')?['basic_protein']:activePackageSettings().map(p=>p.id);
+  return keys.map(k=>{const p=centerCardPackage(k),price=cardChargeFor(status,k),label=p?.name||k;return `<option value="${k}" ${k===selected?'selected':''}>${label}${price?' - '+rs(price):''}</option>`;}).join('');
+};
+centerCardPackageOptions=function(selected,status){return cardPackageOptionsFor(status||'15 Days Card',selected);};
+cardStatusOptions=function(selected=''){
+  const order=['Guest','Trial','No Card','15 Days Card','30 Days Card','Other Days Card','Active','Inactive'];
+  return order.map(k=>{const s=statusSetting(k);if(k==='Guest')return `<option value="Guest" ${selected==='Guest'?'selected':''}>Guest / Lead - no card yet</option>`;if(s.enabled===false)return '';return `<option value="${k}" ${selected===k?'selected':''}>${s.label||k}</option>`;}).join('');
+};
+cardPackageLabel=function(m){
+  if(m?.cardSnapshot?.packageLabel)return m.cardSnapshot.statusLabel?`${m.cardSnapshot.statusLabel} - ${m.cardSnapshot.packageLabel}`:m.cardSnapshot.packageLabel;
+  if(m?.status==='Trial')return statusSetting('Trial').label||'Trial - Basic Protein';
+  if(m?.status==='No Card')return statusSetting('No Card').label||'No Card - Basic Protein';
+  if(!cardTotalForStatus(m?.status,m?.cardPlan?.totalDays))return m?.status==='Guest'?'Guest / Lead':'-';
+  const p=centerCardPackage(m.cardPackageId);
+  return `${cardTierName(m.status)} - ${p?.name||'-'}`;
+};
+cardServingText=function(m){
+  if(m?.cardSnapshot?.servingText)return m.cardSnapshot.servingText;
+  if(!cardTotalForStatus(m?.status,m?.cardPlan?.totalDays))return m?.status==='Guest'?'No serving until Trial/Card starts':'-';
+  if(m.status==='Trial'||m.status==='No Card')return 'Basic Protein serving';
+  return packageServingText(centerCardPackage(m.cardPackageId));
+};
+function makeCardSnapshot(m,status,pkgId,charge,servingNote){
+  const p=centerCardPackage(pkgId),rates=ensureCardSettings().addonRates;
+  return {status,statusLabel:cardTierName(status),packageId:pkgId,packageLabel:p?.name||pkgId,price:+charge||cardChargeFor(status,pkgId),servingText:(status==='Trial'||status==='No Card')?'Basic Protein serving':packageServingText(p),servingNote,formula1:+p?.formula1||0,shakeMate:+p?.shakeMate||0,protein:+p?.protein||0,fiber:+p?.fiber||0,dinoShake:+p?.dinoShake||0,addonRates:{...rates},settingsUpdatedAt:ensureCardSettings().updatedAt||'',createdAt:new Date().toISOString()};
+}
+function snapshotMemberCard(m,prefix){
+  const status=v(prefix+'_status'),pkg=v(prefix+'_cardpkg')||'basic_protein';
+  if(!cardTotalForStatus(status,v(prefix+'_carddays'))&&status!=='No Card'&&status!=='Trial'){delete m.cardSnapshot;return;}
+  m.cardSnapshot=makeCardSnapshot(m,status,pkg,+v(prefix+'_charge')||cardChargeFor(status,pkg),v(prefix+'_servingnote')||defaultServingNote(m,status,pkg,v(prefix+'_afresh')||m.afreshPreference||'Hot'));
+}
+const cardSettingsApplyCardMetaBase=applyCardMetaFromForm;
+applyCardMetaFromForm=function(m,prefix){cardSettingsApplyCardMetaBase(m,prefix);snapshotMemberCard(m,prefix);};
+function cardStatusDomId(k){return String(k).replace(/[^A-Za-z0-9]/g,'_');}
+function cardSettingsStatusRows(){
+  const s=ensureCardSettings().statuses;
+  return ['Trial','No Card','15 Days Card','30 Days Card','Other Days Card','Active','Inactive'].map(k=>{const id=cardStatusDomId(k);return `<tr><td><b>${k}</b><input id="cs_${id}_enabled" type="checkbox" ${s[k]?.enabled!==false?'checked':''} style="margin-left:8px"></td><td><input id="cs_${id}_label" value="${s[k]?.label||k}"></td><td><input id="cs_${id}_days" type="number" value="${+s[k]?.days||0}"></td><td><input id="cs_${id}_charge" type="number" value="${+s[k]?.charge||0}"></td><td><input id="cs_${id}_basic" type="number" value="${+s[k]?.basicBase||0}"></td><td><input id="cs_${id}_dino" type="number" value="${+s[k]?.dinoBase||0}"></td></tr>`;}).join('');
+}
+function cardSettingsPackageRows(){
+  return ensureCardSettings().packages.map((p,i)=>`<tr><td><input id="cp_${i}_active" type="checkbox" ${p.active!==false?'checked':''}></td><td><input id="cp_${i}_name" value="${p.name||''}"><input id="cp_${i}_id" type="hidden" value="${p.id}"></td><td><input id="cp_${i}_f1" type="number" step="0.5" value="${+p.formula1||0}"></td><td><input id="cp_${i}_sm" type="number" step="0.5" value="${+p.shakeMate||0}"></td><td><input id="cp_${i}_protein" type="number" step="0.5" value="${+p.protein||0}"></td><td><input id="cp_${i}_fiber" type="number" step="0.5" value="${+p.fiber||0}"></td><td><input id="cp_${i}_dino" type="number" step="0.5" value="${+p.dinoShake||0}"></td></tr>`).join('');
+}
+function manageCardSettingsModal(){
+  if(role!=='head')return toast('Head office only');
+  const rates=ensureCardSettings().addonRates;
+  openModal(`<div class="flex" style="justify-content:space-between"><h3>Card Package Settings</h3><span class="x" onclick="closeModal()">x</span></div><div class="tier-note"><b>Future pricing:</b> changes here affect new card sales. Existing member cards keep their saved price and kitchen serving snapshot.</div><div class="grid3" style="margin-top:10px"><div><label>Extra protein / day</label><input id="cs_extra_protein" type="number" value="${+rates.extraProteinPerDay||0}"></div><div><label>Half protein / day</label><input id="cs_half_protein" type="number" value="${+rates.halfProteinPerDay||0}"></div><div><label>Extra fiber / day</label><input id="cs_extra_fiber" type="number" value="${+rates.extraFiberPerDay||0}"></div></div><h3 style="margin-top:14px">Status / card base rates</h3><div class="tablewrap"><table><thead><tr><th>Status</th><th>Display label</th><th>Days</th><th>Fixed charge</th><th>Basic base</th><th>Dino base</th></tr></thead><tbody>${cardSettingsStatusRows()}</tbody></table></div><h3 style="margin-top:14px">Serving package composition</h3><div class="tablewrap"><table><thead><tr><th>Use</th><th>Package name</th><th>F1</th><th>ShakeMate</th><th>Protein</th><th>Fiber</th><th>Dino</th></tr></thead><tbody>${cardSettingsPackageRows()}</tbody></table></div><div class="mini-metric" style="margin-top:8px">Calculated price = Basic/Dino base + protein extra per day + fiber extra per day. Member form still allows manual charge override when needed.</div><div style="text-align:right;margin-top:12px"><button class="btn" onclick="saveCardSettings()">Save package settings</button></div>`);
+}
+function saveCardSettings(){
+  if(role!=='head')return toast('Head office only');
+  const settings=ensureCardSettings(),statuses={};
+  Object.keys(settings.statuses).forEach(k=>{const id=cardStatusDomId(k);statuses[k]={...(settings.statuses[k]||{}),enabled:vc('cs_'+id+'_enabled'),label:v('cs_'+id+'_label')||k,days:+v('cs_'+id+'_days')||0,charge:+v('cs_'+id+'_charge')||0,basicBase:+v('cs_'+id+'_basic')||0,dinoBase:+v('cs_'+id+'_dino')||0};});
+  const packages=settings.packages.map((p,i)=>({id:v('cp_'+i+'_id')||p.id,name:v('cp_'+i+'_name')||p.name,formula1:+v('cp_'+i+'_f1')||0,shakeMate:+v('cp_'+i+'_sm')||0,protein:+v('cp_'+i+'_protein')||0,fiber:+v('cp_'+i+'_fiber')||0,dinoShake:+v('cp_'+i+'_dino')||0,active:vc('cp_'+i+'_active')}));
+  S.cardSettings={addonRates:{extraProteinPerDay:+v('cs_extra_protein')||0,halfProteinPerDay:+v('cs_half_protein')||0,extraFiberPerDay:+v('cs_extra_fiber')||0},statuses,packages,updatedAt:new Date().toISOString(),updatedBy:curUser?.username||'system'};
+  save();closeModal();render();toast('Card package settings saved');
+}
+const cardSettingsViewMembersBase=viewMembers;
+viewMembers=function(){
+  cardSettingsViewMembersBase();
+  if(role==='head'){
+    const head=document.querySelector('#view .page-head');
+    if(head&&!document.getElementById('card_settings_btn'))head.insertAdjacentHTML('beforeend',`<button id="card_settings_btn" class="btn ghost" onclick="manageCardSettingsModal()">Card Package Settings</button>`);
+  }
+};
+ensureCardSettings();
+
 /* Supabase shared-state backend */
 const SUPABASE_BACKEND={
   url:'https://qesvwjrnqjszcrrlhvfw.supabase.co',
