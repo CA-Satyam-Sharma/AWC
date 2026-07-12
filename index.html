@@ -2099,6 +2099,109 @@ viewMembers=function(){
 };
 VIEWS.members=viewMembers;
 
+/* Confidential blood report privacy controls */
+function canViewBloodReports(){
+  return ['head','owner','admin'].includes(role)||['admin','owner'].includes(curUser?.username||'');
+}
+function bloodReportPin(){
+  S.privacySettings=S.privacySettings||{};
+  return String(S.privacySettings.bloodReportPin||'4321');
+}
+function bloodPinSessionKey(){return 'awc_blood_pin_ok_'+(curUser?.username||'guest');}
+function bloodPinUnlocked(){try{return sessionStorage.getItem(bloodPinSessionKey())==='1';}catch(e){return false;}}
+function lockBloodReports(){try{sessionStorage.removeItem(bloodPinSessionKey());}catch(e){}render();toast('Blood reports locked');}
+function unlockBloodReports(id){
+  if(!canViewBloodReports())return toast('Admin / owner only');
+  const pin=prompt('Enter confidential blood report PIN');
+  if(pin===null)return;
+  if(String(pin)!==bloodReportPin())return toast('Wrong blood report PIN');
+  try{sessionStorage.setItem(bloodPinSessionKey(),'1');}catch(e){}
+  render();
+  if(id)toast('Blood reports unlocked');
+}
+function changeBloodReportPinModal(){
+  if(!canViewBloodReports())return toast('Admin / owner only');
+  openModal(`<div class="flex" style="justify-content:space-between"><h3>Blood Report PIN</h3><span class="x" onclick="closeModal()">x</span></div><div class="tier-note">This PIN is a privacy screen inside the app. For stronger legal-grade privacy, move blood reports to a separate secured Supabase table later.</div><div class="grid2" style="margin-top:10px"><div><label>Current PIN</label><input id="brp_old" type="password"></div><div><label>New PIN</label><input id="brp_new" type="password" maxlength="8"></div></div><div style="text-align:right;margin-top:12px"><button class="btn" onclick="saveBloodReportPin()">Save PIN</button></div>`);
+}
+function saveBloodReportPin(){
+  if(String(v('brp_old'))!==bloodReportPin())return toast('Current PIN is wrong');
+  const pin=String(v('brp_new')||'').trim();
+  if(!/^[0-9]{4,8}$/.test(pin))return toast('Use a 4 to 8 digit PIN');
+  S.privacySettings=S.privacySettings||{};
+  S.privacySettings.bloodReportPin=pin;
+  S.privacySettings.bloodReportPinUpdatedAt=new Date().toISOString();
+  S.privacySettings.bloodReportPinUpdatedBy=curUser?.username||'system';
+  lockBloodReports();
+  save();closeModal();toast('Blood report PIN changed');
+}
+function bloodReportRows(m){
+  return (m.bloodReports||[]).slice().reverse().map(r=>[r.date||'',r.fastingSugar||'',r.ppSugar||'',r.hba1c||'',r.cholesterol||'',r.hdl||'',r.ldl||'',r.thyroid||'',r.vitaminD||'',r.b12||'',r.hemoglobin||'',r.creatinine||'',r.uricAcid||'',(r.custom||[]).map(x=>x.name+': '+x.value).join(', ')]);
+}
+function confidentialBloodReportHTML(m){
+  if(!canViewBloodReports())return '';
+  if(!bloodPinUnlocked())return `<div class="card confidential-blood-card" style="margin-top:14px"><div class="flex" style="justify-content:space-between;align-items:flex-start"><div><h3>Confidential Blood Reports</h3><div class="mini-metric">Visible only to admin / center owner after PIN unlock. This data is not printed on member forms.</div></div><button class="btn sm" onclick="unlockBloodReports('${m.id}')">Unlock</button></div></div>`;
+  const rows=bloodReportRows(m);
+  return `<div class="card confidential-blood-card" style="margin-top:14px"><div class="flex" style="justify-content:space-between;align-items:flex-start"><div><h3>Confidential Blood Reports</h3><div class="mini-metric">Unlocked for this session. This section is excluded from member print forms.</div></div><div class="flex"><button class="btn sm" onclick="bloodReportModal('${m.id}')">Add report</button><button class="btn sm ghost" onclick="changeBloodReportPinModal()">Change PIN</button><button class="btn sm ghost" onclick="lockBloodReports()">Lock</button></div></div>${rows.length?`<div class="tablewrap" style="margin-top:10px">${tableToHTML(['Date','Fasting','PP','HbA1c','Chol.','HDL','LDL','Thyroid','Vit D','B12','Hemoglobin','Creatinine','Uric Acid','Custom'],rows)}</div>`:'<div class="empty">No blood reports recorded.</div>'}</div>`;
+}
+function removeVisibleBloodReportCards(){
+  document.querySelectorAll('#view .card').forEach(card=>{
+    const text=(card.querySelector('h3')?.textContent||'')+' '+(card.textContent||'');
+    if(/Blood Reports|Blood Report Parameters/i.test(text))card.remove();
+    if(!canViewBloodReports()&&/Complete Health Details/i.test(text)&&/Fasting|HbA1c|Cholesterol|Thyroid/i.test(text))card.remove();
+  });
+}
+const confidentialBloodReportModalBase=bloodReportModal;
+bloodReportModal=function(id){
+  if(!canViewBloodReports())return toast('Blood reports are admin / owner only');
+  if(!bloodPinUnlocked())return unlockBloodReports(id);
+  confidentialBloodReportModalBase(id);
+};
+const confidentialSaveBloodReportBase=saveBloodReport;
+saveBloodReport=function(id){
+  if(!canViewBloodReports()||!bloodPinUnlocked())return toast('Unlock confidential blood reports first');
+  confidentialSaveBloodReportBase(id);
+};
+const confidentialMemberQuickActionsBase=memberQuickActions;
+memberQuickActions=function(m){
+  let html=confidentialMemberQuickActionsBase(m);
+  const reportBtn=/<button class="btn sm" onclick="bloodReportModal\('([^']+)'\)">Add Blood Report<\/button>/;
+  if(!canViewBloodReports())return html.replace(reportBtn,'');
+  return html.replace(reportBtn,`<button class="btn sm" onclick="bloodReportModal('$1')">Confidential Blood Report</button>`);
+};
+const confidentialHealthActionButtonsBase=healthActionButtons;
+healthActionButtons=function(m,taskId=''){
+  let html=confidentialHealthActionButtonsBase(m,taskId);
+  const reportBtn=/<button class="btn sm ghost" onclick="bloodReportModal\('([^']+)'\)">Blood report<\/button>/;
+  if(!canViewBloodReports())return html.replace(reportBtn,'');
+  return html.replace(reportBtn,`<button class="btn sm ghost" onclick="bloodReportModal('$1')">Confidential report</button>`);
+};
+const confidentialViewMemberDetailBase=viewMemberDetail;
+viewMemberDetail=function(){
+  confidentialViewMemberDetailBase();
+  const m=member(curMemberId);if(!m)return;
+  removeVisibleBloodReportCards();
+  document.getElementById('view')?.insertAdjacentHTML('beforeend',confidentialBloodReportHTML(m));
+};
+VIEWS.mdetail=viewMemberDetail;
+const confidentialRenderMemberPortalBase=typeof renderMemberPortal==='function'?renderMemberPortal:null;
+if(confidentialRenderMemberPortalBase){
+  renderMemberPortal=function(){confidentialRenderMemberPortalBase();removeVisibleBloodReportCards();};
+}
+printMemberForm=function(id){
+  const m=member(id),ad=latestAdvice(m.id),assessments=m.assessments||[],family=m.family||[];
+  const centerName=(center(m.centerId)||{}).name||'';
+  const healthRows=assessments.length?assessments.map(a=>[a.date||'',a.weight||'',a.height||m.height||'',a.bmi||'',a.fatPct||'',a.visceral||'',a.muscle||'',a.restingMet||'',a.bodyAge||'',a.water||'',a.diet||'']):[['No readings recorded','','','','','','','','','','']];
+  const familyRows=family.length?family.map(f=>[f.name||'',f.relation||'',f.dob||'',f.mobile||'',f.gender||'',f.notes||'']):[['No family members recorded','','','','','']];
+  const conditions=[...(m.illnesses||[]),m.illnessOther||''].filter(Boolean).join(', ')||'None recorded';
+  const cardText=m.trial?('Trial 4 days | Fee '+rs(m.trial.fee||1000)+' | First day free | Days attended '+((m.trial.days||[]).filter(Boolean).length)+'/4 | End '+trialEnd(m.trial)):(m.recommendedCardDays?('Recommended card days: '+m.recommendedCardDays):'Not entered');
+  const inner=`<fieldset><legend>Member Details</legend><div class="gline"><div><b>Member ID:</b> ${m.code||''}</div><div><b>Name:</b> ${m.name||''}</div><div><b>Father name:</b> ${m.fatherName||''}</div><div><b>Mobile:</b> ${m.mobile||''}</div><div><b>WhatsApp:</b> ${m.whatsapp||''}</div><div><b>DOB:</b> ${m.dob||''}</div><div><b>Age:</b> ${m.dob?age(m.dob):''}</div><div><b>Center:</b> ${centerName}</div><div><b>Coach:</b> ${m.assignedCoachId||''}</div><div><b>Herbalife ID:</b> ${m.herbalifeId||''}</div><div><b>Next check-up due:</b> ${m.nextCheckup||''}</div><div><b>Card / plan:</b> ${cardText}</div></div><p><b>Address:</b> ${m.address||''}</p></fieldset>
+  <fieldset><legend>Health Checkup / Test Machine Tracker</legend>${tableToHTML(['Date','Weight','Height','BMI','Fat %','Visceral','Muscle %','Resting Met.','Body age','Water','Diet note'],healthRows)}<p><b>Member illness / health conditions:</b> ${conditions}</p></fieldset>
+  <fieldset><legend>Diet and Timing Recommended</legend><p><b>Diet:</b> ${ad.dietRecommended||'Not entered'}</p><p><b>Timing:</b> ${ad.timingRecommended||'Not entered'}</p><p><b>Effective from:</b> ${ad.effectiveFrom||''} &nbsp; <b>Given by:</b> ${ad.givenBy||''}</p><p><b>Notes:</b> ${ad.notes||''}</p></fieldset>
+  <fieldset><legend>Family Members</legend>${tableToHTML(['Name','Relation','DOB','Mobile','Gender','Notes'],familyRows)}</fieldset>
+  <p class="disc">This form is for wellness tracking only and does not replace professional medical advice, diagnosis or treatment. Confidential blood report values are intentionally excluded from this printed form.</p>`;
+  printHTML('Complete Wellness Form - '+m.name,inner,true);
+};
+
 /* Supabase shared-state backend */
 const SUPABASE_BACKEND={
   url:'https://qesvwjrnqjszcrrlhvfw.supabase.co',
