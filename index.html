@@ -2363,11 +2363,105 @@ viewMembers=function(){
   if(['head','owner'].includes(role)){
     const head=document.querySelector('#view .page-head');
     const old=document.getElementById('card_settings_btn');
-    if(old)old.setAttribute('onclick',"openHubCard('cardbuilder')");
+    if(old)old.remove();
     if(head&&!document.getElementById('card_builder_btn'))head.insertAdjacentHTML('beforeend',`<button id="card_builder_btn" class="btn ghost" onclick="openHubCard('cardbuilder')">Card Packages</button>`);
   }
 };
 VIEWS.members=viewMembers;
+
+/* Coach daily auto-attendance: card day counts without kitchen serving */
+function isCoachMember(m){
+  return !!(m&&(m.isCoach||m.coachUsername||(S.users||[]).some(u=>u.role==='coach'&&u.memberId===m.id&&u.active!==false)));
+}
+function isCoachAutoRecord(a){return !!(a&&(a.source==='coach-auto'||a.autoPresent));}
+function coachAutoTimeReached(){
+  const now=new Date(),minutes=now.getHours()*60+now.getMinutes();
+  return minutes>=12*60+30;
+}
+function coachAutoAttendanceEligible(m,date=today()){
+  if(!isCoachMember(m)||m.coachAutoAttendance===false)return false;
+  const u=cardUsage(m);
+  if(!u||u.total!==30||!u.start||date<u.start||date>addDays(u.start,u.total-1))return false;
+  const hasAny=(m.attendance||[]).some(a=>normalizeAttendanceRecord(m,a).date===date);
+  if(hasAny)return false;
+  const usedBefore=new Set((m.attendance||[]).map(a=>normalizeAttendanceRecord(m,a)).filter(a=>a.date>=u.start&&a.date<date).map(a=>a.date)).size;
+  return usedBefore<u.total;
+}
+function runCoachAutoAttendance(date=today()){
+  if(date!==today()||!coachAutoTimeReached())return false;
+  let changed=false;
+  (S.members||[]).forEach(m=>{
+    if(!coachAutoAttendanceEligible(m,date))return;
+    m.attendance=m.attendance||[];
+    m.attendance.push({date,centerId:m.centerId,homeCenterId:m.centerId,source:'coach-auto',autoPresent:true,kitchenServing:false,markedBy:'system-auto',markedAt:new Date().toISOString()});
+    m.updatedBy='system-auto';m.updatedAt=new Date().toISOString();
+    changed=true;
+  });
+  if(changed)save();
+  return changed;
+}
+const coachAutoLoadBase=load;
+load=function(){coachAutoLoadBase();runCoachAutoAttendance();};
+const coachAutoRenderBase=render;
+render=function(){runCoachAutoAttendance();coachAutoRenderBase();};
+setInterval(()=>{if(runCoachAutoAttendance())render();},60000);
+const coachAutoMarkAttendBase=markAttendDate;
+markAttendDate=function(id){
+  const m=member(id);if(!m)return;
+  if(!attDate)attDate=today();
+  const manualHere=attendanceRecordsInRange(m,attDate,attDate,curCenter).some(a=>!isCoachAutoRecord(a));
+  if(manualHere)return toast('Already marked today at this center');
+  const hadAuto=(m.attendance||[]).some(a=>normalizeAttendanceRecord(m,a).date===attDate&&isCoachAutoRecord(a));
+  if(hadAuto){
+    m.attendance=(m.attendance||[]).filter(a=>!(normalizeAttendanceRecord(m,a).date===attDate&&isCoachAutoRecord(a)));
+    save();
+  }
+  coachAutoMarkAttendBase(id);
+};
+const coachAutoMemberVisitLabelBase=memberVisitLabelForRecord;
+memberVisitLabelForRecord=function(m,rec){
+  const label=coachAutoMemberVisitLabelBase(m,rec);
+  if(!isCoachMember(m))return label;
+  return `${label} (${isCoachAutoRecord(rec)?'Auto':'Actual'})`;
+};
+function memberKitchenPresentAt(m,date,cid=curCenter){
+  return attendanceRecordsInRange(m,date,date,cid).some(a=>!isCoachAutoRecord(a));
+}
+function coachAttendanceRows(from,to,cid='all'){
+  const rows=[];
+  (S.members||[]).filter(isCoachMember).forEach(m=>{
+    attendanceRecordsInRange(m,from,to,cid).forEach(a=>{
+      rows.push([a.date,m.code,m.name,centerLabel(m.centerId),centerLabel(a.centerId),isCoachAutoRecord(a)?'Auto present':'Actual present',memberVisitLabelForRecord(m,a),a.markedBy||'',String(a.markedAt||'').replace('T',' ').slice(0,16)]);
+    });
+  });
+  return rows.sort((a,b)=>(a[0]+a[2]+a[5]).localeCompare(b[0]+b[2]+b[5]));
+}
+const coachAutoBuildReportBase=buildReport;
+buildReport=function(){
+  if(repType==='coachAttendance'){
+    const from=repFrom||repTo||today(),to=repTo||repFrom||today(),cid=role==='head'&&curCenterObj()?.isHeadOffice?'all':curCenter;
+    return {title:`Coach Attendance ${from} to ${to}`,head:['Date','Code','Coach / member','Home center','Marked at center','Type','Card visit','Marked by','Marked at'],rows:coachAttendanceRows(from,to,cid)};
+  }
+  return coachAutoBuildReportBase();
+};
+const coachAutoViewReportsBase=viewReports;
+viewReports=function(){
+  coachAutoViewReportsBase();
+  const btns=document.querySelector('.repbtns');
+  if(btns&&!btns.querySelector('[data-report="coachAttendance"]'))btns.insertAdjacentHTML('beforeend',`<button data-report="coachAttendance" class="${repType==='coachAttendance'?'on':''}" onclick="repType='coachAttendance';render()">Coach Attendance</button>`);
+};
+const coachAutoKitchenMatrixBase=kitchenMatrix;
+kitchenMatrix=function(){
+  const date=attDate||today();
+  const present=allSearchableMembers().filter(m=>memberKitchenPresentAt(m,date,curCenter)&&m.status!=='Inactive');
+  const valid=present.filter(m=>cardUsableOnDate(m,date)),hidden=present.filter(m=>!cardUsableOnDate(m,date));
+  const head=['Member','Home center','Visit center','Card','Afresh','Balance','Payment','Center serving','Service'];
+  const rows=valid.map(m=>{const rec=kitchenRecordFor(m,date),u=cardUsage(m);return {member:m,rec,values:[m.name,centerLabel(m.centerId),centerLabel(curCenter),cardPackageLabel(m),m.afreshPreference||'Hot',u?Math.max(0,u.remaining)+' left':'-',kitchenPaymentLabel(m),m.centerServingNote||defaultServingNote(m,m.status,m.cardPackageId,m.afreshPreference),rec?rec.status:'Pending']};});
+  return {valid,hidden,head,rows};
+};
+VIEWS.reports=viewReports;
+VIEWS.attendance=viewAttendance;
+VIEWS.kitchen=viewKitchen;
 
 /* Confidential blood report privacy controls */
 function canViewBloodReports(){
