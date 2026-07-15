@@ -2463,6 +2463,83 @@ VIEWS.reports=viewReports;
 VIEWS.attendance=viewAttendance;
 VIEWS.kitchen=viewKitchen;
 
+/* Optional member mobile numbers: allow blanks and shared family numbers */
+phoneAttrs=function(){
+  return `inputmode="numeric" maxlength="10" pattern="\\d{0,10}" oninput="this.value=this.value.replace(/\\D/g,'').slice(0,10)"`;
+};
+function readOptionalPhone(id,label='Mobile'){
+  const el=document.getElementById(id),val=cleanPhone(el?.value||'');
+  if(el)el.value=val;
+  if(val&&!isPhone10(val)){toast(label+' must be exactly 10 digits when entered');return null;}
+  return val;
+}
+function relabelOptionalMobileFields(){
+  const pairs=[['m_mobile','Mobile (optional, 10 digits if entered)'],['e_mobile','Mobile (optional, 10 digits if entered)']];
+  pairs.forEach(([id,text])=>{
+    const el=document.getElementById(id),label=el?.parentElement?.querySelector('label');
+    if(label)label.textContent=text;
+  });
+}
+const optionalMobileAddMemberModalBase=addMemberModal;
+addMemberModal=function(){
+  optionalMobileAddMemberModalBase();
+  relabelOptionalMobileFields();
+};
+const optionalMobileEditMemberModalBase=editMemberModal;
+editMemberModal=function(id){
+  optionalMobileEditMemberModalBase(id);
+  relabelOptionalMobileFields();
+};
+syncMembersToParties=function(){
+  S.customers=S.customers||[];
+  (S.members||[]).forEach(m=>{
+    let p=S.customers.find(c=>c.memberId===m.id);
+    if(!p){p={id:'PARTY-'+m.id,kind:'member',tier:'bronze',memberId:m.id};S.customers.push(p);}
+    p.name=m.name+' (Member)';
+    p.mobile=m.mobile||'';
+    p.kind='member';
+    p.tier=p.tier||'bronze';
+    p.memberId=m.id;
+    p.centerId=m.centerId;
+    p.herbalifeId=m.herbalifeId||'';
+  });
+};
+saveMember=function(){
+  const name=String(v('m_name')||'').trim(),mobile=readOptionalPhone('m_mobile'),wa=readOptionalPhone('m_wa','WhatsApp');
+  if(!name)return toast('Name required');
+  if(mobile===null||wa===null)return;
+  const status=v('m_status'),id='M'+Date.now(),code=nextMemberCode(curCenter),who=curUser?.username||'system',coach=(document.getElementById('m_coach')?.value||'').trim(),manualRef=String(v('m_reftext')||'').trim();
+  const m=blankMember({id,centerId:curCenter,code,name,fatherName:v('m_father'),mobile,whatsapp:wa,email:v('m_email'),gender:v('m_gender'),dob:v('m_dob'),height:+v('m_height')||null,occupation:v('m_occ'),address:v('m_addr'),herbalifeId:v('m_hlid').trim(),referralSource:v('m_refsrc'),referredById:v('m_refby'),status,assignedCoachId:coach,joinedAt:v('m_joined')||today(),createdBy:who,createdAt:new Date().toISOString(),updatedBy:who,updatedAt:new Date().toISOString()});
+  if(manualRef){m.referredByText=manualRef;if(!m.referredById)m.referralSource='Referral';}
+  applyCardMetaFromForm(m,'m');
+  S.members.push(m);
+  syncMembersToParties();
+  save();closeModal();openMember(id);toast('Member added ('+code+') by '+who);
+};
+saveEditMember=function(id){
+  const m=member(id),mobile=readOptionalPhone('e_mobile'),wa=readOptionalPhone('e_wa','WhatsApp');
+  if(!m)return toast('Member not found');
+  if(mobile===null||wa===null)return;
+  const codeEl=document.getElementById('e_code');
+  if(role==='head'&&codeEl){
+    const code=String(codeEl.value||'').trim();
+    if(!code)return toast('Member ID required');
+    if((S.members||[]).some(x=>x.id!==id&&String(x.code||'').toLowerCase()===code.toLowerCase()))return toast('Member ID already exists');
+    m.code=code;
+  }
+  const manualRef=String(v('e_reftext')||'').trim(),renewStart=v('e_joined')||cardStartDate(m),renewing=shouldArchiveRenewal(m,'e');
+  if(renewing)archiveCurrentCard(m,'renewed',renewStart);
+  m.name=v('e_name');m.mobile=mobile;m.fatherName=v('e_father');m.whatsapp=wa;m.email=v('e_email');m.herbalifeId=v('e_hlid');m.height=+v('e_h')||null;m.occupation=v('e_occ');m.referralSource=v('e_refsrc');m.referredById=v('e_refby');m.assignedCoachId=v('e_coach');m.status=v('e_status');m.address=v('e_addr');
+  if(document.getElementById('e_reftext')){m.referredByText=manualRef;if(manualRef&&!m.referredById)m.referralSource='Referral';}
+  applyCardMetaFromForm(m,'e');
+  archiveCompletedCardIfNeeded(m);
+  m.updatedBy=curUser?.username||'system';m.updatedAt=new Date().toISOString();
+  syncMembersToParties();save();closeModal();render();toast(renewing?'Old card moved to Old Cards. New card saved.':'Member profile saved');
+};
+memberListRows=function(ms){
+  return ms.length?ms.map(m=>`<tr><td>${m.code}</td><td class="clik" onclick="editMemberModal('${m.id}')">${m.name}</td><td>${m.fatherName||'-'}</td><td>${m.mobile||'-'}</td><td>${memberRefLabel(m)}</td><td>${memberCoachLabel(m)}</td><td>${m.status}</td><td>${cardPackageLabel(m)}</td><td>${cardUsageLabel(m)}</td><td>${cardDueDate(m)||'-'}</td><td class="r"><button class="btn sm ghost" onclick="editMemberModal('${m.id}')">Edit</button> ${memberLedgerButton(m.id)} ${role==='head'?`<button class="btn sm ghost" onclick="moveMemberModal('${m.id}')">Move</button>${headMemberAdminButtons(m)}`:''} <button class="btn sm ghost" onclick="openMember('${m.id}')">Open</button></td></tr>`).join(''):'<tr><td colspan="11" class="empty">No members found.</td></tr>';
+};
+
 /* Confidential blood report privacy controls */
 function canViewBloodReports(){
   return ['head','owner','admin'].includes(role)||['admin','owner'].includes(curUser?.username||'');
