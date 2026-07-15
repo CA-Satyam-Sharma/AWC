@@ -2363,8 +2363,8 @@ viewMembers=function(){
   if(['head','owner'].includes(role)){
     const head=document.querySelector('#view .page-head');
     const old=document.getElementById('card_settings_btn');
-    if(old)old.setAttribute('onclick',"go('cardbuilder')");
-    if(head&&!document.getElementById('card_builder_btn'))head.insertAdjacentHTML('beforeend',`<button id="card_builder_btn" class="btn ghost" onclick="go('cardbuilder')">Card Packages</button>`);
+    if(old)old.setAttribute('onclick',"openHubCard('cardbuilder')");
+    if(head&&!document.getElementById('card_builder_btn'))head.insertAdjacentHTML('beforeend',`<button id="card_builder_btn" class="btn ghost" onclick="openHubCard('cardbuilder')">Card Packages</button>`);
   }
 };
 VIEWS.members=viewMembers;
