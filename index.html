@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<!-- deploy-refresh: guest-lead-workflow-2026-07-03 -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -2098,6 +2097,214 @@ viewMembers=function(){
   }
 };
 VIEWS.members=viewMembers;
+
+/* Card & Package Builder: editable card types, ingredients, packages and add-ons */
+function defaultIngredientSettings(){
+  return [
+    {id:'formula1',name:'Formula 1',unit:'scoop',kitchen:true,active:true},
+    {id:'shakeMate',name:'ShakeMate',unit:'scoop',kitchen:true,active:true},
+    {id:'protein',name:'Protein',unit:'scoop',kitchen:true,active:true},
+    {id:'fiber',name:'Fiber',unit:'scoop',kitchen:true,active:true},
+    {id:'dinoShake',name:'Dino Shake',unit:'scoop',kitchen:true,active:true},
+    {id:'afresh',name:'Afresh',unit:'serving',kitchen:true,active:true}
+  ];
+}
+function defaultAddOnSettings(){
+  return [
+    {id:'extra_protein',name:'Extra Protein',ratePerDay:40,fixedRate:0,active:true},
+    {id:'half_protein',name:'Half Protein',ratePerDay:20,fixedRate:0,active:true},
+    {id:'extra_fiber',name:'Extra Fiber',ratePerDay:80,fixedRate:0,active:true}
+  ];
+}
+function pkgIngredientsFromLegacy(p){
+  return p?.ingredients||{
+    formula1:+p?.formula1||0,
+    shakeMate:+p?.shakeMate||0,
+    protein:+p?.protein||0,
+    fiber:+p?.fiber||0,
+    dinoShake:+p?.dinoShake||0
+  };
+}
+function pkgAddonsFromLegacy(p){
+  if(Array.isArray(p?.addons))return p.addons;
+  const ids=[];
+  if((+p?.dinoShake||0)>0&&(+p?.protein||0)===0.5)ids.push('half_protein');
+  if((+p?.dinoShake||0)===0&&(+p?.protein||0)>1)ids.push('extra_protein');
+  if((+p?.fiber||0)>0)ids.push('extra_fiber');
+  return ids;
+}
+function normalizePackageSetting(p){
+  const ingredients=pkgIngredientsFromLegacy(p),baseMode=p.baseMode||((+ingredients.dinoShake||0)>0?'dino':'basic');
+  return {...p,ingredients,baseMode,addons:pkgAddonsFromLegacy(p),fixedCharge:+p.fixedCharge||0,priceAdjust:+p.priceAdjust||0,active:p.active!==false};
+}
+const packageBuilderDefaultCardSettingsBase=defaultCardSettings;
+defaultCardSettings=function(){
+  const d=packageBuilderDefaultCardSettingsBase();
+  d.ingredients=defaultIngredientSettings();
+  d.addons=defaultAddOnSettings();
+  d.packages=[
+    {id:'basic_protein',name:'Basic 3F1 + 2 ShakeMate + 1 Protein',baseMode:'basic',ingredients:{formula1:3,shakeMate:2,protein:1,fiber:0,dinoShake:0},addons:[],active:true},
+    {id:'basic_no_protein',name:'Basic 3F1 + 2 ShakeMate - no Protein',baseMode:'basic',ingredients:{formula1:3,shakeMate:2,protein:0,fiber:0,dinoShake:0},addons:[],active:true},
+    {id:'more_protein',name:'Basic + extra Protein',baseMode:'basic',ingredients:{formula1:3,shakeMate:2,protein:2,fiber:0,dinoShake:0},addons:['extra_protein'],active:true},
+    {id:'basic_protein_fiber',name:'Basic + extra Fiber',baseMode:'basic',ingredients:{formula1:3,shakeMate:2,protein:1,fiber:1,dinoShake:0},addons:['extra_fiber'],active:true},
+    {id:'more_protein_fiber',name:'Basic + extra Protein + Fiber',baseMode:'basic',ingredients:{formula1:3,shakeMate:2,protein:2,fiber:1,dinoShake:0},addons:['extra_protein','extra_fiber'],active:true},
+    {id:'dino_shakemate',name:'Dino Shake + ShakeMate',baseMode:'dino',ingredients:{formula1:0,shakeMate:2,protein:0,fiber:0,dinoShake:1},addons:[],active:true},
+    {id:'dino_half_protein',name:'Dino Shake + ShakeMate + half Protein',baseMode:'dino',ingredients:{formula1:0,shakeMate:2,protein:.5,fiber:0,dinoShake:1},addons:['half_protein'],active:true}
+  ];
+  return d;
+};
+ensureCardSettings=function(){
+  const d=defaultCardSettings();
+  S.cardSettings=S.cardSettings||{};
+  S.cardSettings.addonRates={...d.addonRates,...(S.cardSettings.addonRates||{})};
+  S.cardSettings.statuses={...d.statuses,...(S.cardSettings.statuses||{})};
+  S.cardSettings.ingredients=(S.cardSettings.ingredients&&S.cardSettings.ingredients.length?S.cardSettings.ingredients:d.ingredients).map(x=>({...x,active:x.active!==false,kitchen:x.kitchen!==false}));
+  S.cardSettings.addons=(S.cardSettings.addons&&S.cardSettings.addons.length?S.cardSettings.addons:d.addons).map(x=>({...x,active:x.active!==false,ratePerDay:+x.ratePerDay||0,fixedRate:+x.fixedRate||0}));
+  S.cardSettings.packages=(S.cardSettings.packages&&S.cardSettings.packages.length?S.cardSettings.packages:d.packages).map(normalizePackageSetting);
+  return S.cardSettings;
+};
+function ingredientSettings(){return ensureCardSettings().ingredients.filter(i=>i.active!==false);}
+function kitchenIngredientSettings(){return ingredientSettings().filter(i=>i.kitchen!==false);}
+function addOnSettings(){return ensureCardSettings().addons.filter(a=>a.active!==false);}
+function packageAddOnLabels(p){return (p.addons||[]).map(id=>ensureCardSettings().addons.find(a=>a.id===id)?.name||id).join(', ');}
+function packageAddOnCharge(p,days){return (p.addons||[]).reduce((sum,id)=>{const a=ensureCardSettings().addons.find(x=>x.id===id&&x.active!==false);return sum+(a?((+a.ratePerDay||0)*(+days||0)+(+a.fixedRate||0)):0);},0);}
+computedPackageCharge=function(status,pkgId,current){
+  const st=statusSetting(status),p=centerCardPackage(pkgId),days=+st.days||0;
+  if(status==='Trial'||status==='No Card')return +st.charge||0;
+  if(status==='Other Days Card')return +current||0;
+  if(!days||!p)return 0;
+  if(+p.fixedCharge>0)return Math.round(+p.fixedCharge);
+  const base=p.baseMode==='dino'?(+st.dinoBase||0):p.baseMode==='none'?0:(+st.basicBase||0);
+  return Math.round(base+(+p.priceAdjust||0)+packageAddOnCharge(p,days));
+};
+cardChargeFor=function(status,pkgId,current){return computedPackageCharge(status,pkgId,current);};
+packageServingText=function(p){
+  if(!p)return '-';
+  const ingredients=pkgIngredientsFromLegacy(p);
+  const parts=kitchenIngredientSettings().map(i=>{
+    const qty=+ingredients[i.id]||0;
+    if(!qty)return '';
+    return `${i.name} ${qty} ${i.unit||'unit'}${qty===1?'':'s'}`;
+  }).filter(Boolean);
+  return parts.length?parts.join(', '):'No kitchen serving items';
+};
+cardServingText=function(m){
+  if(m?.cardSnapshot?.servingText)return m.cardSnapshot.servingText;
+  if(!cardTotalForStatus(m?.status,m?.cardPlan?.totalDays))return m?.status==='Guest'?'No serving until Trial/Card starts':'-';
+  if(m.status==='Trial'||m.status==='No Card')return 'Basic Protein serving';
+  return packageServingText(centerCardPackage(m.cardPackageId));
+};
+cardPackageLabel=function(m){
+  if(m?.cardSnapshot?.packageLabel)return m.cardSnapshot.statusLabel?`${m.cardSnapshot.statusLabel} - ${m.cardSnapshot.packageLabel}`:m.cardSnapshot.packageLabel;
+  if(m?.status==='Trial')return statusSetting('Trial').label||'Trial - Basic Protein';
+  if(m?.status==='No Card')return statusSetting('No Card').label||'No Card - Basic Protein';
+  if(!cardTotalForStatus(m?.status,m?.cardPlan?.totalDays))return m?.status==='Guest'?'Guest / Lead':'-';
+  const p=centerCardPackage(m.cardPackageId);
+  return `${cardTierName(m.status)} - ${p?.name||'-'}`;
+};
+makeCardSnapshot=function(m,status,pkgId,charge,servingNote){
+  const p=centerCardPackage(pkgId),ingredients=pkgIngredientsFromLegacy(p);
+  return {status,statusLabel:cardTierName(status),packageId:pkgId,packageLabel:p?.name||pkgId,price:+charge||cardChargeFor(status,pkgId),servingText:(status==='Trial'||status==='No Card')?'Basic Protein serving':packageServingText(p),servingNote,ingredients:{...ingredients},addons:[...(p?.addons||[])],addonLabels:packageAddOnLabels(p),settingsUpdatedAt:ensureCardSettings().updatedAt||'',createdAt:new Date().toISOString()};
+};
+cardPackageOptionsFor=function(status,selected){
+  if(status==='Guest')return `<option value="basic_protein" ${selected==='basic_protein'?'selected':''}>Guest / Lead</option>`;
+  const keys=(status==='Trial'||status==='No Card')?['basic_protein']:activePackageSettings().map(p=>p.id);
+  return keys.map(k=>{const p=centerCardPackage(k),price=cardChargeFor(status,k),label=p?.name||k;return `<option value="${k}" ${k===selected?'selected':''}>${label}${price?' - '+rs(price):''}</option>`;}).join('');
+};
+cardStatusOptions=function(selected=''){
+  const first=['Guest','Trial','No Card','15 Days Card','30 Days Card','Other Days Card','Active','Inactive'];
+  const keys=[...first,...Object.keys(ensureCardSettings().statuses).filter(k=>!first.includes(k))];
+  return keys.map(k=>{const s=statusSetting(k);if(s.enabled===false)return '';return `<option value="${k}" ${selected===k?'selected':''}>${s.label||k}</option>`;}).join('');
+};
+cardUiChanged=function(prefix){
+  const st=document.getElementById(prefix+'_status')?.value||'Trial',pkgEl=document.getElementById(prefix+'_cardpkg'),box=document.getElementById(prefix+'_carddays_box'),note=document.getElementById(prefix+'_cardnote'),charge=document.getElementById(prefix+'_charge'),recv=document.getElementById(prefix+'_received'),freshEl=document.getElementById(prefix+'_afresh'),serv=document.getElementById(prefix+'_servingnote');
+  if(box)box.style.display=st==='Other Days Card'?'block':'none';
+  if(pkgEl){
+    const prev=pkgEl.value||'basic_protein';
+    pkgEl.innerHTML=cardPackageOptionsFor(st,prev);
+    const first=pkgEl.options[0]?.value||'basic_protein';
+    pkgEl.value=[...pkgEl.options].some(o=>o.value===prev)?prev:first;
+  }
+  const pkg=pkgEl?.value||'basic_protein',val=st==='Guest'?0:cardChargeFor(st,pkg,charge?.value);
+  if(charge&&st!=='Other Days Card')charge.value=val||0;
+  if(recv&&(recv.value===''||recv.dataset.auto==='1')){recv.value=(st==='Other Days Card'?(charge?.value||''):val)||0;recv.dataset.auto='1';}
+  if(serv&&serv.dataset.manual!=='1'){serv.value=st==='Guest'?'Guest / Lead - no serving until Trial/Card starts':defaultServingNote({status:st,cardPackageId:pkg,afreshPreference:freshEl?.value||'Hot'});}
+  if(note){
+    if(st==='Guest'){note.style.display='block';note.innerHTML='Guest / Lead: visible in attendance reports. Convert to Trial or a paid card when they start.';return;}
+    const d=cardTotalForStatus(st,document.getElementById(prefix+'_carddays')?.value);
+    note.style.display=d?'block':'none';
+    note.innerHTML=st==='Other Days Card'?'Enter custom card days and manual charges.':`${cardTierName(st)} will track ${d} day(s). Attendance/check-in consumes days.`;
+  }
+};
+function settingSlug(text,prefix='custom'){
+  return (String(text||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'')||prefix)+'_'+String(Date.now()).slice(-4);
+}
+function settingCell(row,sel){return row.querySelector(sel)?.value||'';}
+function addCardTypeRow(){document.getElementById('cs_status_rows')?.insertAdjacentHTML('beforeend',cardSettingsStatusRow('custom_'+Date.now(),{label:'New card type',days:0,charge:0,basicBase:0,dinoBase:0,enabled:true},true));}
+function addIngredientRow(){document.getElementById('cs_ingredient_rows')?.insertAdjacentHTML('beforeend',ingredientSettingsRow({id:'ing_'+Date.now(),name:'New ingredient',unit:'scoop',kitchen:true,active:true},true));}
+function addAddOnRow(){document.getElementById('cs_addon_rows')?.insertAdjacentHTML('beforeend',addOnSettingsRow({id:'addon_'+Date.now(),name:'New add-on',ratePerDay:0,fixedRate:0,active:true},true));}
+function addPackageRow(){document.getElementById('cs_package_rows')?.insertAdjacentHTML('beforeend',cardSettingsPackageRow({id:'pkg_'+Date.now(),name:'New package',baseMode:'basic',ingredients:{},addons:[],priceAdjust:0,fixedCharge:0,active:true},true));}
+function removeSettingsRow(btn){btn.closest('tr')?.remove();}
+function cardSettingsStatusRow(k,s,custom=false){const id=cardStatusDomId(k);return `<tr data-key="${k}" data-custom="${custom?'1':'0'}"><td>${custom?`<input class="cs_key" value="${k}">`:`<b>${k}</b>`}<input class="cs_enabled" type="checkbox" ${s.enabled!==false?'checked':''} style="margin-left:8px"></td><td><input class="cs_label" value="${s.label||k}"></td><td><input class="cs_days" type="number" value="${+s.days||0}"></td><td><input class="cs_charge" type="number" value="${+s.charge||0}"></td><td><input class="cs_basic" type="number" value="${+s.basicBase||0}"></td><td><input class="cs_dino" type="number" value="${+s.dinoBase||0}"></td><td>${custom?`<button class="btn sm bad" onclick="removeSettingsRow(this)">Delete</button>`:'-'}</td></tr>`;}
+cardSettingsStatusRows=function(){const s=ensureCardSettings().statuses,first=['Trial','No Card','15 Days Card','30 Days Card','Other Days Card','Active','Inactive'],keys=[...first,...Object.keys(s).filter(k=>!first.includes(k))];return keys.map(k=>cardSettingsStatusRow(k,s[k],!first.includes(k))).join('');};
+function ingredientSettingsRow(i,custom=false){return `<tr data-id="${i.id}"><td><input class="ci_active" type="checkbox" ${i.active!==false?'checked':''}></td><td><input class="ci_id" value="${i.id||''}"></td><td><input class="ci_name" value="${i.name||''}"></td><td><input class="ci_unit" value="${i.unit||'unit'}"></td><td><input class="ci_kitchen" type="checkbox" ${i.kitchen!==false?'checked':''}></td><td>${custom?`<button class="btn sm bad" onclick="removeSettingsRow(this)">Delete</button>`:'-'}</td></tr>`;}
+function ingredientSettingsRows(){return ensureCardSettings().ingredients.map(i=>ingredientSettingsRow(i,false)).join('');}
+function addOnSettingsRow(a,custom=false){return `<tr data-id="${a.id}"><td><input class="ca_active" type="checkbox" ${a.active!==false?'checked':''}></td><td><input class="ca_id" value="${a.id||''}"></td><td><input class="ca_name" value="${a.name||''}"></td><td><input class="ca_day" type="number" value="${+a.ratePerDay||0}"></td><td><input class="ca_fixed" type="number" value="${+a.fixedRate||0}"></td><td>${custom?`<button class="btn sm bad" onclick="removeSettingsRow(this)">Delete</button>`:'-'}</td></tr>`;}
+function addOnSettingsRows(){return ensureCardSettings().addons.map(a=>addOnSettingsRow(a,false)).join('');}
+function addonSelectOptions(selected=[]){return ensureCardSettings().addons.map(a=>`<option value="${a.id}" ${selected.includes(a.id)?'selected':''}>${a.name||a.id}</option>`).join('');}
+function cardSettingsPackageRow(p,custom=false){
+  const ing=pkgIngredientsFromLegacy(p),ingCols=ensureCardSettings().ingredients.map(i=>`<td><input class="cp_ing" data-ing="${i.id}" type="number" step="0.5" value="${+ing[i.id]||0}"></td>`).join('');
+  return `<tr data-id="${p.id}"><td><input class="cp_active" type="checkbox" ${p.active!==false?'checked':''}></td><td><input class="cp_id" value="${p.id||''}"></td><td><input class="cp_name" value="${p.name||''}"></td><td><select class="cp_base"><option value="basic" ${p.baseMode==='basic'?'selected':''}>Basic base</option><option value="dino" ${p.baseMode==='dino'?'selected':''}>Dino base</option><option value="none" ${p.baseMode==='none'?'selected':''}>No base</option></select></td><td><input class="cp_fixed" type="number" value="${+p.fixedCharge||0}"></td><td><input class="cp_adjust" type="number" value="${+p.priceAdjust||0}"></td><td><select class="cp_addons" multiple size="3">${addonSelectOptions(p.addons||[])}</select></td>${ingCols}<td><button class="btn sm bad" onclick="removeSettingsRow(this)">Delete</button></td></tr>`;
+}
+cardSettingsPackageRows=function(){return ensureCardSettings().packages.map(p=>cardSettingsPackageRow(p,false)).join('');};
+function collectCardStatuses(){
+  const statuses={};
+  document.querySelectorAll('#cs_status_rows tr').forEach(row=>{
+    const key=(row.querySelector('.cs_key')?.value||row.dataset.key||'').trim();
+    if(!key)return;
+    statuses[key]={enabled:row.querySelector('.cs_enabled')?.checked!==false,label:settingCell(row,'.cs_label')||key,days:+settingCell(row,'.cs_days')||0,charge:+settingCell(row,'.cs_charge')||0,basicBase:+settingCell(row,'.cs_basic')||0,dinoBase:+settingCell(row,'.cs_dino')||0};
+  });
+  return statuses;
+}
+function collectIngredients(){
+  const seen=new Set(),out=[];
+  document.querySelectorAll('#cs_ingredient_rows tr').forEach(row=>{
+    const id=(settingCell(row,'.ci_id')||settingSlug(settingCell(row,'.ci_name'),'ing')).trim();
+    if(!id||seen.has(id))return;seen.add(id);
+    out.push({id,name:settingCell(row,'.ci_name')||id,unit:settingCell(row,'.ci_unit')||'unit',kitchen:row.querySelector('.ci_kitchen')?.checked!==false,active:row.querySelector('.ci_active')?.checked!==false});
+  });
+  return out;
+}
+function collectAddOns(){
+  const seen=new Set(),out=[];
+  document.querySelectorAll('#cs_addon_rows tr').forEach(row=>{
+    const id=(settingCell(row,'.ca_id')||settingSlug(settingCell(row,'.ca_name'),'addon')).trim();
+    if(!id||seen.has(id))return;seen.add(id);
+    out.push({id,name:settingCell(row,'.ca_name')||id,ratePerDay:+settingCell(row,'.ca_day')||0,fixedRate:+settingCell(row,'.ca_fixed')||0,active:row.querySelector('.ca_active')?.checked!==false});
+  });
+  return out;
+}
+function collectPackages(){
+  const seen=new Set(),out=[];
+  document.querySelectorAll('#cs_package_rows tr').forEach(row=>{
+    const id=(settingCell(row,'.cp_id')||settingSlug(settingCell(row,'.cp_name'),'pkg')).trim();
+    if(!id||seen.has(id))return;seen.add(id);
+    const ingredients={};row.querySelectorAll('.cp_ing').forEach(el=>ingredients[el.dataset.ing]=+el.value||0);
+    const addons=Array.from(row.querySelector('.cp_addons')?.selectedOptions||[]).map(o=>o.value);
+    out.push({id,name:settingCell(row,'.cp_name')||id,baseMode:settingCell(row,'.cp_base')||'basic',fixedCharge:+settingCell(row,'.cp_fixed')||0,priceAdjust:+settingCell(row,'.cp_adjust')||0,ingredients,addons,active:row.querySelector('.cp_active')?.checked!==false});
+  });
+  return out;
+}
+manageCardSettingsModal=function(){
+  if(role!=='head')return toast('Head office only');
+  const settings=ensureCardSettings(),rates=settings.addonRates,ingHeads=settings.ingredients.map(i=>`<th>${i.name||i.id}</th>`).join('');
+  openModal(`<div class="flex" style="justify-content:space-between"><h3>Card & Package Builder</h3><span class="x" onclick="closeModal()">x</span></div><div class="tier-note"><b>Future pricing:</b> changes here affect new card sales only. Existing member cards keep their saved price and kitchen serving snapshot.</div><h3 style="margin-top:14px">Card types</h3><div class="tablewrap"><table><thead><tr><th>Code / Use</th><th>Display label</th><th>Days</th><th>Fixed charge</th><th>Basic base</th><th>Dino base</th><th>Action</th></tr></thead><tbody id="cs_status_rows">${cardSettingsStatusRows()}</tbody></table></div><button class="btn sm ghost" onclick="addCardTypeRow()">+ Add card type</button><h3 style="margin-top:14px">Serving ingredients</h3><div class="tablewrap"><table><thead><tr><th>Use</th><th>Code</th><th>Name</th><th>Unit</th><th>Kitchen</th><th>Action</th></tr></thead><tbody id="cs_ingredient_rows">${ingredientSettingsRows()}</tbody></table></div><button class="btn sm ghost" onclick="addIngredientRow()">+ Add ingredient</button><h3 style="margin-top:14px">Add-ons / rates</h3><div class="tablewrap"><table><thead><tr><th>Use</th><th>Code</th><th>Name</th><th>Rate / day</th><th>Fixed rate</th><th>Action</th></tr></thead><tbody id="cs_addon_rows">${addOnSettingsRows()}</tbody></table></div><button class="btn sm ghost" onclick="addAddOnRow()">+ Add add-on</button><h3 style="margin-top:14px">Packages / kitchen composition</h3><div class="tablewrap"><table><thead><tr><th>Use</th><th>Code</th><th>Package name</th><th>Base</th><th>Fixed price override</th><th>Manual adjustment</th><th>Add-ons</th>${ingHeads}<th>Action</th></tr></thead><tbody id="cs_package_rows">${cardSettingsPackageRows()}</tbody></table></div><button class="btn sm ghost" onclick="addPackageRow()">+ Add package</button><div class="mini-metric" style="margin-top:8px">Calculated price = selected card type base + package add-ons + manual adjustment. Fixed price override wins when entered. Card sale screen can still manually override final charge.</div><div style="text-align:right;margin-top:12px"><button class="btn" onclick="saveCardSettings()">Save builder settings</button></div>`);
+};
+saveCardSettings=function(){
+  if(role!=='head')return toast('Head office only');
+  S.cardSettings={addonRates:{extraProteinPerDay:+v('cs_extra_protein')||40,halfProteinPerDay:+v('cs_half_protein')||20,extraFiberPerDay:+v('cs_extra_fiber')||80},statuses:collectCardStatuses(),ingredients:collectIngredients(),addons:collectAddOns(),packages:collectPackages(),updatedAt:new Date().toISOString(),updatedBy:curUser?.username||'system'};
+  save();closeModal();render();toast('Card & package builder saved');
+};
 
 /* Confidential blood report privacy controls */
 function canViewBloodReports(){
