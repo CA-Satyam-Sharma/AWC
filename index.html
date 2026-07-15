@@ -2540,6 +2540,103 @@ memberListRows=function(ms){
   return ms.length?ms.map(m=>`<tr><td>${m.code}</td><td class="clik" onclick="editMemberModal('${m.id}')">${m.name}</td><td>${m.fatherName||'-'}</td><td>${m.mobile||'-'}</td><td>${memberRefLabel(m)}</td><td>${memberCoachLabel(m)}</td><td>${m.status}</td><td>${cardPackageLabel(m)}</td><td>${cardUsageLabel(m)}</td><td>${cardDueDate(m)||'-'}</td><td class="r"><button class="btn sm ghost" onclick="editMemberModal('${m.id}')">Edit</button> ${memberLedgerButton(m.id)} ${role==='head'?`<button class="btn sm ghost" onclick="moveMemberModal('${m.id}')">Move</button>${headMemberAdminButtons(m)}`:''} <button class="btn sm ghost" onclick="openMember('${m.id}')">Open</button></td></tr>`).join(''):'<tr><td colspan="11" class="empty">No members found.</td></tr>';
 };
 
+/* Custom serving override for special-case cards */
+const CUSTOM_SERVING_ROWS=[
+  {id:'shakeMate',label:'Shakemate'},
+  {id:'formula1',label:'Formula 1'},
+  {id:'protein',label:'Protein'},
+  {id:'fiber',label:'Fibre'},
+  {id:'dinoShake',label:'Dino Shake'}
+];
+function customServingFromPackage(pkgId){
+  const ing=pkgIngredientsFromLegacy(centerCardPackage(pkgId)||{});
+  return CUSTOM_SERVING_ROWS.reduce((out,row)=>{out[row.id]=+ing[row.id]||0;return out;},{});
+}
+function customServingDataForForm(prefix,m={}){
+  const saved=m.customServing||m.cardSnapshot?.customServing||null;
+  if(saved?.enabled)return saved;
+  const pkg=m.cardPackageId||document.getElementById(prefix+'_cardpkg')?.value||'basic_protein';
+  return {enabled:false,items:customServingFromPackage(pkg),otherName:'',otherQty:'',totalPrice:m.cardPayment?.charge||cardChargeFor(m.status||'Trial',pkg)};
+}
+function customServingInput(prefix,row,value=''){
+  return `<tr><td>${row.label}</td><td><input id="${prefix}_cs_${row.id}" type="number" step="0.5" min="0" value="${value||0}"></td></tr>`;
+}
+function customServingFields(prefix,m={}){
+  const data=customServingDataForForm(prefix,m),items=data.items||{},checked=data.enabled?'checked':'',display=data.enabled?'block':'none',price=data.totalPrice||m.cardPayment?.charge||'';
+  return `<div style="grid-column:1/-1;border:1px solid #dbe6ef;border-radius:8px;padding:12px;background:#f8fafc"><label class="chk"><input id="${prefix}_custom_enabled" type="checkbox" ${checked} onchange="toggleCustomServing('${prefix}')"> Custom serving / special case</label><div class="mini-metric">Use only when this member/card needs different scoops or a manual special price. It overrides the selected package for this card only.</div><div id="${prefix}_custom_box" style="display:${display};margin-top:10px"><div class="tablewrap"><table><thead><tr><th>Diet</th><th>Scoops</th></tr></thead><tbody>${CUSTOM_SERVING_ROWS.map(row=>customServingInput(prefix,row,items[row.id])).join('')}<tr><td><input id="${prefix}_cs_other_name" value="${data.otherName||''}" placeholder="Any other item"></td><td><input id="${prefix}_cs_other_qty" type="number" step="0.5" min="0" value="${data.otherQty||''}"></td></tr><tr><td><b>Total Price</b></td><td><input id="${prefix}_custom_price" type="number" value="${price}" oninput="syncCustomTotalPrice('${prefix}')"></td></tr></tbody></table></div><div class="mini-metric">Kitchen sees diet/scoops only. Total Price is saved in ledger and receipt, not shown to kitchen.</div></div></div>`;
+}
+function fillCustomServingFromPackage(prefix){
+  const pkg=document.getElementById(prefix+'_cardpkg')?.value||'basic_protein',items=customServingFromPackage(pkg);
+  CUSTOM_SERVING_ROWS.forEach(row=>{const el=document.getElementById(prefix+'_cs_'+row.id);if(el)el.value=items[row.id]||0;});
+  const price=document.getElementById(prefix+'_custom_price'),charge=document.getElementById(prefix+'_charge');
+  if(price&&charge&&!price.value)price.value=charge.value||0;
+}
+function toggleCustomServing(prefix){
+  const on=vc(prefix+'_custom_enabled'),box=document.getElementById(prefix+'_custom_box');
+  if(box)box.style.display=on?'block':'none';
+  if(on){fillCustomServingFromPackage(prefix);syncCustomTotalPrice(prefix);}
+}
+function syncCustomTotalPrice(prefix){
+  if(!vc(prefix+'_custom_enabled'))return;
+  const price=document.getElementById(prefix+'_custom_price'),charge=document.getElementById(prefix+'_charge'),recv=document.getElementById(prefix+'_received');
+  const value=+price?.value||0;
+  if(charge)charge.value=value;
+  if(recv&&(recv.value===''||recv.dataset.auto==='1')){recv.value=value;recv.dataset.auto='1';}
+}
+function collectCustomServing(prefix){
+  if(!vc(prefix+'_custom_enabled'))return null;
+  const items={};CUSTOM_SERVING_ROWS.forEach(row=>items[row.id]=+v(prefix+'_cs_'+row.id)||0);
+  return {enabled:true,items,otherName:String(v(prefix+'_cs_other_name')||'').trim(),otherQty:+v(prefix+'_cs_other_qty')||0,totalPrice:+v(prefix+'_custom_price')||+v(prefix+'_charge')||0,updatedAt:new Date().toISOString(),updatedBy:curUser?.username||'system'};
+}
+function customServingKitchenText(data,afresh=''){
+  if(!data?.enabled)return '';
+  const parts=CUSTOM_SERVING_ROWS.map(row=>{
+    const qty=+data.items?.[row.id]||0;
+    return qty?`${row.label} ${qty}`:'';
+  }).filter(Boolean);
+  if(data.otherName||data.otherQty)parts.push(`${data.otherName||'Any other item'}${data.otherQty?' '+data.otherQty:''}`);
+  if(afresh)parts.push(`Afresh ${afresh}`);
+  return parts.length?parts.join(', '):'Custom serving';
+}
+const customServingCardMetaFieldsBase=cardMetaFields;
+cardMetaFields=function(prefix,m={}){
+  return customServingCardMetaFieldsBase(prefix,m)+customServingFields(prefix,m);
+};
+const customServingCardUiChangedBase=cardUiChanged;
+cardUiChanged=function(prefix){
+  customServingCardUiChangedBase(prefix);
+  if(vc(prefix+'_custom_enabled'))syncCustomTotalPrice(prefix);
+};
+const customServingApplyCardMetaBase=applyCardMetaFromForm;
+applyCardMetaFromForm=function(m,prefix){
+  customServingApplyCardMetaBase(m,prefix);
+  const custom=collectCustomServing(prefix);
+  if(custom){
+    m.customServing=custom;
+    m.cardPayment=m.cardPayment||{};
+    m.cardPayment.charge=custom.totalPrice;
+    m.centerServingNote=customServingKitchenText(custom,m.afreshPreference||v(prefix+'_afresh')||'Hot');
+    m.cardSnapshot=m.cardSnapshot||{};
+    m.cardSnapshot.customServing=custom;
+    m.cardSnapshot.packageLabel='Custom serving';
+    m.cardSnapshot.servingText=customServingKitchenText(custom,m.afreshPreference||'Hot');
+    m.cardSnapshot.price=custom.totalPrice;
+  }else{
+    delete m.customServing;
+  }
+};
+const customServingCardServingTextBase=cardServingText;
+cardServingText=function(m){
+  const custom=m?.customServing||m?.cardSnapshot?.customServing;
+  if(custom?.enabled)return customServingKitchenText(custom,m?.afreshPreference||'');
+  return customServingCardServingTextBase(m);
+};
+const customServingCardPackageLabelBase=cardPackageLabel;
+cardPackageLabel=function(m){
+  if(m?.customServing?.enabled||m?.cardSnapshot?.customServing?.enabled)return `${m?.cardSnapshot?.statusLabel||cardTierName(m?.status)||m?.status||'Card'} - Custom serving`;
+  return customServingCardPackageLabelBase(m);
+};
+
 /* Confidential blood report privacy controls */
 function canViewBloodReports(){
   return ['head','owner','admin'].includes(role)||['admin','owner'].includes(curUser?.username||'');
