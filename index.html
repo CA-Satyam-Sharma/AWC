@@ -2305,6 +2305,69 @@ saveCardSettings=function(){
   S.cardSettings={addonRates:{extraProteinPerDay:+v('cs_extra_protein')||40,halfProteinPerDay:+v('cs_half_protein')||20,extraFiberPerDay:+v('cs_extra_fiber')||80},statuses:collectCardStatuses(),ingredients:collectIngredients(),addons:collectAddOns(),packages:collectPackages(),updatedAt:new Date().toISOString(),updatedBy:curUser?.username||'system'};
   save();closeModal();render();toast('Card & package builder saved');
 };
+function packageBuilderEnsureModule(){
+  ensureModule('cardbuilder','Card Packages');
+  MODULE_MARKS.cardbuilder='CP';
+  ['head','owner'].forEach(r=>grantModule(r,'cardbuilder'));
+  const card={key:'cardbuilder',mark:'CP',title:'Card Packages',desc:'Card types, serving ingredients, package composition, add-ons and price rules.',modules:['cardbuilder'],group:'Reports & Admin'};
+  if(!HUB_CARDS.some(c=>c.key==='cardbuilder'))HUB_CARDS.push(card);else updateHub('cardbuilder',card);
+}
+const cardBuilderEnsureV10Base=ensureV10;
+ensureV10=function(){cardBuilderEnsureV10Base();packageBuilderEnsureModule();};
+const cardBuilderModuleVisualBase=moduleVisual;
+moduleVisual=function(key){
+  if(key==='cardbuilder')return `<span class="module-visual" style="--accent:#0f766e;--soft:#ecfdf5" aria-hidden="true"><svg viewBox="0 0 180 110" role="img"><defs><linearGradient id="g_cardbuilder" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ecfdf5"/><stop offset="1" stop-color="#ffffff"/></linearGradient></defs><rect width="180" height="110" fill="url(#g_cardbuilder)"/><circle cx="150" cy="25" r="36" fill="#0f766e" opacity=".10"/><rect x="42" y="28" width="96" height="54" rx="10" fill="#fff" stroke="#0f766e" stroke-width="6"/><path d="M58 46h28m14 0h22M58 63h18m24 0h24M70 82l-12 14m52-14 12 14" fill="none" stroke="#0f766e" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="46" cy="88" r="8" fill="#0f766e" opacity=".18"/></svg></span>`;
+  return cardBuilderModuleVisualBase(key);
+};
+const cardBuilderRemoveSettingsRowBase=removeSettingsRow;
+removeSettingsRow=function(btn){btn.closest('.builder-package-card')?.remove()||cardBuilderRemoveSettingsRowBase(btn);};
+function cardBuilderKpis(){
+  const s=ensureCardSettings();
+  return `<div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:14px"><div class="card kpi blue"><div class="label">Card types</div><div class="val">${Object.keys(s.statuses).length}</div></div><div class="card kpi green"><div class="label">Active packages</div><div class="val">${s.packages.filter(p=>p.active!==false).length}</div></div><div class="card kpi blue"><div class="label">Ingredients</div><div class="val">${s.ingredients.length}</div></div><div class="card kpi green"><div class="label">Add-ons</div><div class="val">${s.addons.length}</div></div></div>`;
+}
+function cardBuilderPackageCard(p){
+  const ing=pkgIngredientsFromLegacy(p);
+  const ingHtml=ensureCardSettings().ingredients.map(i=>`<div><label>${i.name||i.id} (${i.unit||'unit'})</label><input class="cp_ing" data-ing="${i.id}" type="number" step="0.5" value="${+ing[i.id]||0}"></div>`).join('');
+  return `<div class="card builder-package-card" data-id="${p.id}" style="box-shadow:none;border-color:#dbe6ef"><div class="flex" style="justify-content:space-between;align-items:flex-start"><div style="min-width:220px"><label>Package name</label><input class="cp_name" value="${p.name||''}"><input class="cp_id" value="${p.id||''}" style="margin-top:6px" title="Package code"></div><label class="chk" style="margin-top:28px"><input class="cp_active" type="checkbox" ${p.active!==false?'checked':''}> Active</label><button class="btn sm bad" onclick="removeSettingsRow(this)">Delete</button></div><div class="grid4" style="margin-top:10px"><div><label>Base price type</label><select class="cp_base"><option value="basic" ${p.baseMode==='basic'?'selected':''}>Basic base</option><option value="dino" ${p.baseMode==='dino'?'selected':''}>Dino base</option><option value="none" ${p.baseMode==='none'?'selected':''}>No base</option></select></div><div><label>Fixed price override</label><input class="cp_fixed" type="number" value="${+p.fixedCharge||0}"></div><div><label>Manual adjustment</label><input class="cp_adjust" type="number" value="${+p.priceAdjust||0}"></div><div><label>Add-ons</label><select class="cp_addons" multiple size="3">${addonSelectOptions(p.addons||[])}</select></div></div><h3 style="font-size:14px;margin:14px 0 8px">Kitchen composition</h3><div class="grid4">${ingHtml}</div></div>`;
+}
+function cardBuilderPackageCards(){return ensureCardSettings().packages.map(cardBuilderPackageCard).join('');}
+function addPackageRow(){document.getElementById('cs_package_rows')?.insertAdjacentHTML('beforeend',cardBuilderPackageCard({id:'pkg_'+Date.now(),name:'New package',baseMode:'basic',ingredients:{},addons:[],priceAdjust:0,fixedCharge:0,active:true}));}
+collectPackages=function(){
+  const seen=new Set(),out=[];
+  document.querySelectorAll('#cs_package_rows .builder-package-card').forEach(row=>{
+    const id=(settingCell(row,'.cp_id')||settingSlug(settingCell(row,'.cp_name'),'pkg')).trim();
+    if(!id||seen.has(id))return;seen.add(id);
+    const ingredients={};row.querySelectorAll('.cp_ing').forEach(el=>ingredients[el.dataset.ing]=+el.value||0);
+    const addons=Array.from(row.querySelector('.cp_addons')?.selectedOptions||[]).map(o=>o.value);
+    out.push({id,name:settingCell(row,'.cp_name')||id,baseMode:settingCell(row,'.cp_base')||'basic',fixedCharge:+settingCell(row,'.cp_fixed')||0,priceAdjust:+settingCell(row,'.cp_adjust')||0,ingredients,addons,active:row.querySelector('.cp_active')?.checked!==false});
+  });
+  return out;
+};
+saveCardSettings=function(){
+  if(!['head','owner'].includes(role))return toast('Head office / owner only');
+  const addons=collectAddOns();
+  const rateBy=id=>+(addons.find(a=>a.id===id)?.ratePerDay)||0;
+  S.cardSettings={addonRates:{extraProteinPerDay:rateBy('extra_protein')||40,halfProteinPerDay:rateBy('half_protein')||20,extraFiberPerDay:rateBy('extra_fiber')||80},statuses:collectCardStatuses(),ingredients:collectIngredients(),addons,packages:collectPackages(),updatedAt:new Date().toISOString(),updatedBy:curUser?.username||'system'};
+  save();render();toast('Card & package builder saved');
+};
+function viewCardBuilder(){
+  if(!['head','owner'].includes(role))return viewMembers();
+  const settings=ensureCardSettings();
+  document.getElementById('view').innerHTML=`<div class="page-head"><div><h2>Card Packages</h2><p>Manage card types, package composition, add-ons and kitchen serving rules from one full page.</p></div><button class="btn" onclick="saveCardSettings()">Save all settings</button></div>${cardBuilderKpis()}<div class="workflow-guide"><div><b>Card types</b><span>Set labels, days and base prices.</span></div><div><b>Ingredients</b><span>Control what kitchen sees and the units used.</span></div><div><b>Packages</b><span>Build serving composition and attach add-ons.</span></div></div><div class="card"><div class="flex" style="justify-content:space-between"><h3>Card types</h3><button class="btn sm ghost" onclick="addCardTypeRow()">+ Add card type</button></div><div class="tablewrap" style="margin-top:8px"><table><thead><tr><th>Code / Use</th><th>Display label</th><th>Days</th><th>Fixed charge</th><th>Basic base</th><th>Dino base</th><th>Action</th></tr></thead><tbody id="cs_status_rows">${cardSettingsStatusRows()}</tbody></table></div></div><div class="grid2" style="margin-top:14px"><div class="card"><div class="flex" style="justify-content:space-between"><h3>Serving ingredients</h3><button class="btn sm ghost" onclick="addIngredientRow()">+ Add ingredient</button></div><div class="tablewrap" style="margin-top:8px"><table><thead><tr><th>Use</th><th>Code</th><th>Name</th><th>Unit</th><th>Kitchen</th><th>Action</th></tr></thead><tbody id="cs_ingredient_rows">${ingredientSettingsRows()}</tbody></table></div></div><div class="card"><div class="flex" style="justify-content:space-between"><h3>Add-ons / rates</h3><button class="btn sm ghost" onclick="addAddOnRow()">+ Add add-on</button></div><div class="tablewrap" style="margin-top:8px"><table><thead><tr><th>Use</th><th>Code</th><th>Name</th><th>Rate / day</th><th>Fixed rate</th><th>Action</th></tr></thead><tbody id="cs_addon_rows">${addOnSettingsRows()}</tbody></table></div></div></div><section style="margin-top:14px"><div class="flex" style="justify-content:space-between;align-items:flex-start"><div><h3>Packages / kitchen composition</h3><div class="mini-metric">Each package is a separate card. No horizontal scrolling needed for composition.</div></div><button class="btn sm ghost" onclick="addPackageRow()">+ Add package</button></div><div id="cs_package_rows" class="grid2" style="margin-top:12px">${cardBuilderPackageCards()}</div></section><div style="text-align:right;margin-top:14px"><button class="btn" onclick="saveCardSettings()">Save all settings</button></div>`;
+}
+VIEWS.cardbuilder=viewCardBuilder;
+manageCardSettingsModal=function(){active='cardbuilder';showModuleHub=false;hubGroup='cardbuilder';render();};
+const cardBuilderViewMembersBase=viewMembers;
+viewMembers=function(){
+  cardBuilderViewMembersBase();
+  if(['head','owner'].includes(role)){
+    const head=document.querySelector('#view .page-head');
+    const old=document.getElementById('card_settings_btn');
+    if(old)old.setAttribute('onclick',"go('cardbuilder')");
+    if(head&&!document.getElementById('card_builder_btn'))head.insertAdjacentHTML('beforeend',`<button id="card_builder_btn" class="btn ghost" onclick="go('cardbuilder')">Card Packages</button>`);
+  }
+};
+VIEWS.members=viewMembers;
 
 /* Confidential blood report privacy controls */
 function canViewBloodReports(){
